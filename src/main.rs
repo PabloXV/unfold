@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 const N: usize = 4;
 const SWAP_TIME: Duration = Duration::from_millis(250);
 const FRAME_TIME: Duration = Duration::from_millis(16);
+const FADE_TIME: Duration = Duration::from_millis(900);
 
 /// Two vertices that just traded slots, animating toward their new positions.
 struct Swap {
@@ -32,6 +33,8 @@ struct Game {
     picked: Option<usize>,
     moves: usize,
     swap: Option<Swap>,
+    /// when the winning swap was made
+    solved_at: Option<Instant>,
 }
 
 impl Game {
@@ -74,6 +77,7 @@ impl Game {
             picked: None,
             moves: 0,
             swap: None,
+            solved_at: None,
         };
         while game.crossings() == 0 {
             game.slot.shuffle(&mut rand::rng());
@@ -113,8 +117,16 @@ impl Game {
                 self.picked = None;
                 self.moves += 1;
                 self.swap = Some(Swap { a, b, started: Instant::now() });
+                self.solved_at = (self.crossings() == 0).then(Instant::now);
             }
         }
+    }
+
+    /// 0..1 progress of the creases dissolving, which starts once the winning swap has landed.
+    fn fade(&self) -> f64 {
+        let Some(at) = self.solved_at else { return 0.0 };
+        let t = at.elapsed().saturating_sub(SWAP_TIME).as_secs_f64() / FADE_TIME.as_secs_f64();
+        t.min(1.0)
     }
 
     /// Where vertex v is drawn: its slot, or partway there if it's mid-swap.
@@ -137,7 +149,7 @@ impl Game {
     }
 
     fn animating(&self) -> bool {
-        self.swap.is_some()
+        self.swap.is_some() || (self.solved_at.is_some() && self.fade() < 1.0)
     }
 
     fn vertex_at(&self, s: usize) -> usize {
@@ -163,20 +175,35 @@ type Point = (f64, f64);
 struct Flaps {
     /// triangle corners, bottom to top
     tris: Vec<[Point; 3]>,
-    /// edge endpoints, plus the index of the highest flap the edge belongs to
-    edges: Vec<(Point, Point, usize)>,
+    edges: Vec<Crease>,
     color: Color,
+    /// 0..1, how much of the internal creases has dissolved after a win
+    fade: f64,
+}
+
+struct Crease {
+    p: Point,
+    q: Point,
+    /// index of the highest flap the edge belongs to
+    z: usize,
+    /// shared by two flaps, as opposed to part of the outline
+    internal: bool,
 }
 
 impl Shape for Flaps {
     fn draw(&self, painter: &mut Painter) {
-        for &(p, q, z) in &self.edges {
+        for (e, &Crease { p, q, z, internal }) in self.edges.iter().enumerate() {
             // one sample per braille dot along the longer axis
             let steps = match (painter.get_point(p.0, p.1), painter.get_point(q.0, q.1)) {
                 (Some(a), Some(b)) => a.0.abs_diff(b.0).max(a.1.abs_diff(b.1)).max(1),
                 _ => 100,
             };
             for i in 0..=steps {
+                // dissolve: each dot gets a fixed pseudo-random threshold and vanishes once fade passes it
+                let threshold = (i.wrapping_mul(2654435761) ^ e.wrapping_mul(40503)) % 1000;
+                if internal && (threshold as f64) < self.fade * 1000.0 {
+                    continue;
+                }
                 let t = i as f64 / steps as f64;
                 let pt = (p.0 + (q.0 - p.0) * t, p.1 + (q.1 - p.1) * t);
                 let covered = self.tris[z + 1..].iter().any(|tri| inside(tri, pt));
@@ -248,11 +275,17 @@ fn render(frame: &mut Frame, game: &Game) {
             .edges
             .iter()
             .map(|&(a, b)| {
-                let z = game.flaps.iter().rposition(|f| f.contains(&a) && f.contains(&b));
-                (game.vertex_pos(a), game.vertex_pos(b), z.unwrap_or(0))
+                let owns = |f: &[usize; 3]| f.contains(&a) && f.contains(&b);
+                Crease {
+                    p: game.vertex_pos(a),
+                    q: game.vertex_pos(b),
+                    z: game.flaps.iter().rposition(owns).unwrap_or(0),
+                    internal: game.flaps.iter().filter(|f| owns(f)).count() == 2,
+                }
             })
             .collect(),
         color: edge_color,
+        fade: game.fade(),
     };
     let canvas = Canvas::default()
         .x_bounds([-pad * aspect, pad * aspect])
@@ -262,14 +295,12 @@ fn render(frame: &mut Frame, game: &Game) {
             for v in 0..n {
                 let s = game.slot[v];
                 let (x, y) = game.vertex_pos(v);
-                let dot = if game.picked == Some(s) {
-                    "◉".yellow().bold()
+                // plain vertices are just where edges meet; only the cursor and pick get a marker
+                if game.picked == Some(s) {
+                    ctx.print(x, y, "●".yellow().bold());
                 } else if game.cursor == s {
-                    "○".cyan().bold()
-                } else {
-                    Span::raw("●")
-                };
-                ctx.print(x, y, dot);
+                    ctx.print(x, y, "●".cyan().bold());
+                }
             }
         });
     frame.render_widget(canvas, board);

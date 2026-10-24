@@ -1,7 +1,11 @@
 [package]
-name = "untangle"
+name = "unfold"
 version = "0.1.0"
 edition = "2024"
+
+[[bin]]
+name = "unfld"
+path = "src/main.rs"
 
 [dependencies]
 rand = "0.10.3"
