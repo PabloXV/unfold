@@ -1,3 +1,4 @@
+use rand::RngExt;
 use rand::seq::SliceRandom;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::layout::{Constraint, Layout};
@@ -11,7 +12,10 @@ use std::time::{Duration, Instant};
 const N: usize = 4;
 const SWAP_TIME: Duration = Duration::from_millis(250);
 const FRAME_TIME: Duration = Duration::from_millis(16);
+const UNFOLD_TIME: Duration = Duration::from_millis(1200);
 const FADE_TIME: Duration = Duration::from_millis(900);
+/// chance that a new flap grows off the one just added, which makes snakes and spirals instead of blobs
+const STRIP_BIAS: f64 = 0.6;
 
 /// Two vertices that just traded slots, animating toward their new positions.
 struct Swap {
@@ -27,6 +31,10 @@ struct Game {
     edges: Vec<(usize, usize)>,
     /// the triangles of the graph as vertex triples, stacked bottom to top like sheets of paper
     flaps: Vec<[usize; 3]>,
+    /// where each vertex sits in the flat sheet the flaps were grown as
+    shape: Vec<Point>,
+    /// the shape laid over the solved circle, which the vertices glide to on a win
+    unfolded: Vec<Point>,
     /// the slot the cursor is on
     cursor: usize,
     /// the slot picked as the first half of a swap
@@ -39,40 +47,25 @@ struct Game {
 
 impl Game {
     fn new(n: usize) -> Self {
-        let mut candidates = Vec::new();
-        for a in 0..n {
-            for b in a + 1..n {
-                candidates.push((a, b));
-            }
-        }
-        candidates.shuffle(&mut rand::rng());
-
+        let (shape, mut flaps) = grow(n);
         let mut edges: Vec<(usize, usize)> = Vec::new();
-        for (a, b) in candidates {
-            if !edges.iter().any(|&e| crosses(e, (a, b))) {
-                edges.push((a, b))
-            }
-        }
-
-        // the graph is a triangulation, so every three mutually connected vertices form a face
-        let has = |a: usize, b: usize| edges.contains(&(a, b));
-        let mut flaps = Vec::new();
-        for a in 0..n {
-            for b in a + 1..n {
-                for c in b + 1..n {
-                    if has(a, b) && has(b, c) && has(a, c) {
-                        flaps.push([a, b, c]);
-                    }
+        for &[a, b, c] in &flaps {
+            for (u, v) in [(a, b), (b, c), (a, c)] {
+                let e = (u.min(v), u.max(v));
+                if !edges.contains(&e) {
+                    edges.push(e);
                 }
             }
         }
         flaps.shuffle(&mut rand::rng());
 
-        // the identity arrangement has no crossings, so this always shuffles at least once
+        // shuffle until there's something to untangle
         let mut game = Game {
             slot: (0..n).collect(),
             edges,
             flaps,
+            shape,
+            unfolded: Vec::new(),
             cursor: 0,
             picked: None,
             moves: 0,
@@ -118,19 +111,42 @@ impl Game {
                 self.moves += 1;
                 self.swap = Some(Swap { a, b, started: Instant::now() });
                 self.solved_at = (self.crossings() == 0).then(Instant::now);
+                if self.solved_at.is_some() {
+                    self.unfolded = self.unfold_target();
+                }
             }
         }
     }
 
-    /// 0..1 progress of the creases dissolving, which starts once the winning swap has landed.
-    fn fade(&self) -> f64 {
+    /// 0..1 progress of a phase that starts `delay` after the winning swap and lasts `length`.
+    fn since_win(&self, delay: Duration, length: Duration) -> f64 {
         let Some(at) = self.solved_at else { return 0.0 };
-        let t = at.elapsed().saturating_sub(SWAP_TIME).as_secs_f64() / FADE_TIME.as_secs_f64();
+        let t = at.elapsed().saturating_sub(delay).as_secs_f64() / length.as_secs_f64();
         t.min(1.0)
     }
 
-    /// Where vertex v is drawn: its slot, or partway there if it's mid-swap.
-    fn vertex_pos(&self, v: usize) -> (f64, f64) {
+    /// 0..1 progress of the vertices gliding from the circle to the real shape, once the winning swap has landed.
+    fn unfold(&self) -> f64 {
+        self.since_win(SWAP_TIME, UNFOLD_TIME)
+    }
+
+    /// 0..1 progress of the creases dissolving, once the shape has unfolded.
+    fn fade(&self) -> f64 {
+        self.since_win(SWAP_TIME + UNFOLD_TIME, FADE_TIME)
+    }
+
+    /// Where vertex v is drawn: on the circle while playing, then gliding out to the real shape.
+    fn vertex_pos(&self, v: usize) -> Point {
+        let from = self.circle_pos(v);
+        let t = self.unfold();
+        if t == 0.0 {
+            return from;
+        }
+        lerp(from, self.unfolded[v], ease(t))
+    }
+
+    /// Where vertex v sits on the circle: its slot, or partway there if it's mid-swap.
+    fn circle_pos(&self, v: usize) -> Point {
         let n = self.slot.len();
         let to = pos(self.slot[v], n);
         let Some(swap) = &self.swap else { return to };
@@ -144,8 +160,33 @@ impl Game {
         };
         let from = pos(self.slot[partner], n);
         let t = (swap.started.elapsed().as_secs_f64() / SWAP_TIME.as_secs_f64()).min(1.0);
-        let t = t * t * (3.0 - 2.0 * t); // ease in and out
-        (from.0 + (to.0 - from.0) * t, from.1 + (to.1 - from.1) * t)
+        lerp(from, to, ease(t))
+    }
+
+    /// The shape turned (and mirrored, if the player's outline runs the other way)
+    /// to best match the solved circle, then centered and scaled to fit the board.
+    fn unfold_target(&self) -> Vec<Point> {
+        let n = self.shape.len();
+        let (mx, my) = self.shape.iter().fold((0.0, 0.0), |s, p| (s.0 + p.0 / n as f64, s.1 + p.1 / n as f64));
+        // treating points as complex numbers, the best rotation is the angle of sum(circle * conj(shape))
+        let fit = |flip: f64| {
+            let pts: Vec<Point> = self.shape.iter().map(|p| ((p.0 - mx) * flip, p.1 - my)).collect();
+            let (re, im) = pts.iter().enumerate().fold((0.0, 0.0), |(re, im), (v, s)| {
+                let c = pos(self.slot[v], n);
+                (re + c.0 * s.0 + c.1 * s.1, im + c.1 * s.0 - c.0 * s.1)
+            });
+            (re.hypot(im), pts, im.atan2(re))
+        };
+        let (a, b) = (fit(1.0), fit(-1.0));
+        let (_, pts, angle) = if a.0 >= b.0 { a } else { b };
+        let (sin, cos) = angle.sin_cos();
+        let pts: Vec<Point> = pts.iter().map(|p| (p.0 * cos - p.1 * sin, p.0 * sin + p.1 * cos)).collect();
+        let (lo, hi) = pts.iter().fold(((f64::MAX, f64::MAX), (f64::MIN, f64::MIN)), |(lo, hi), p| {
+            ((lo.0.min(p.0), lo.1.min(p.1)), (hi.0.max(p.0), hi.1.max(p.1)))
+        });
+        let center = ((lo.0 + hi.0) / 2.0, (lo.1 + hi.1) / 2.0);
+        let radius = pts.iter().map(|p| (p.0 - center.0).hypot(p.1 - center.1)).fold(0.0, f64::max);
+        pts.iter().map(|p| ((p.0 - center.0) / radius, (p.1 - center.1) / radius)).collect()
     }
 
     fn animating(&self) -> bool {
@@ -169,6 +210,99 @@ fn crosses((a, b): (usize, usize), (c, d): (usize, usize)) -> bool {
 }
 
 type Point = (f64, f64);
+
+/// Grows a flat sheet of triangles: each new vertex folds out from an edge on the outline,
+/// so the result is a triangulated polygon of any outline, not just a convex one.
+fn grow(n: usize) -> (Vec<Point>, Vec<[usize; 3]>) {
+    let mut rng = rand::rng();
+    'restart: loop {
+        let mut pts: Vec<Point> = vec![(0.0, 0.0), (1.0, 0.0), (0.5, 3f64.sqrt() / 2.0)];
+        let mut tris = vec![[0, 1, 2]];
+        while pts.len() < n {
+            // outline edges belong to exactly one flap; keep the flap's third corner to know which side is outside
+            let mut outline = Vec::new();
+            for (i, &[a, b, c]) in tris.iter().enumerate() {
+                for (u, v, w) in [(a, b, c), (b, c, a), (c, a, b)] {
+                    let shared = tris.iter().any(|t| t != &tris[i] && t.contains(&u) && t.contains(&v));
+                    if !shared {
+                        outline.push((u, v, w, i == tris.len() - 1));
+                    }
+                }
+            }
+            let fresh: Vec<_> = outline.iter().copied().filter(|e| e.3).collect();
+            let placed = (0..200).find_map(|_| {
+                let pool = if rng.random::<f64>() < STRIP_BIAS { &fresh } else { &outline };
+                let (a, b, c, _) = pool[rng.random_range(0..pool.len())];
+                let (p, q, o) = (pts[a], pts[b], pts[c]);
+                let d = (q.0 - p.0, q.1 - p.1);
+                let len = d.0.hypot(d.1);
+                let mid = ((p.0 + q.0) / 2.0, (p.1 + q.1) / 2.0);
+                let mut normal = (-d.1 / len, d.0 / len);
+                if normal.0 * (o.0 - mid.0) + normal.1 * (o.1 - mid.1) > 0.0 {
+                    normal = (-normal.0, -normal.1);
+                }
+                let height = len * 3f64.sqrt() / 2.0 * rng.random_range(0.7..1.3);
+                let slide = rng.random_range(-0.25..0.25);
+                let apex = (
+                    mid.0 + normal.0 * height + d.0 * slide,
+                    mid.1 + normal.1 * height + d.1 * slide,
+                );
+                fits(&pts, &tris, apex, p, q).then_some((apex, a, b))
+            });
+            let Some((apex, a, b)) = placed else { continue 'restart };
+            pts.push(apex);
+            tris.push([a, b, pts.len() - 1]);
+        }
+        return (pts, tris);
+    }
+}
+
+/// Whether a new flap with corners apex, p, q lies flat on the sheet without overlapping it or making slivers.
+fn fits(pts: &[Point], tris: &[[usize; 3]], apex: Point, p: Point, q: Point) -> bool {
+    let dist = |a: Point, b: Point| (a.0 - b.0).hypot(a.1 - b.1);
+    if ![p, q].iter().all(|&e| (0.6..1.5).contains(&dist(apex, e))) {
+        return false;
+    }
+    let new_tri = [apex, p, q];
+    if pts.iter().any(|&v| dist(v, apex) < 0.5 || inside(&new_tri, v)) {
+        return false;
+    }
+    tris.iter().all(|t| {
+        let corners = t.map(|i| pts[i]);
+        !inside(&corners, apex)
+            && (0..3).all(|k| {
+                let (u, w) = (corners[k], corners[(k + 1) % 3]);
+                [p, q].iter().all(|&e| {
+                    let touching = e == u || e == w;
+                    touching || !segments_cross((apex, e), (u, w))
+                }) && (u == p || u == q || segment_dist(u, (apex, p)).min(segment_dist(u, (apex, q))) > 0.25)
+                    && segment_dist(apex, (u, w)) > 0.25
+            })
+    })
+}
+
+/// Whether two segments properly cross each other.
+fn segments_cross((a, b): (Point, Point), (c, d): (Point, Point)) -> bool {
+    let side = |u: Point, v: Point, p: Point| (v.0 - u.0) * (p.1 - u.1) - (v.1 - u.1) * (p.0 - u.0);
+    side(a, b, c) * side(a, b, d) < 0.0 && side(c, d, a) * side(c, d, b) < 0.0
+}
+
+/// Distance from p to the nearest point of segment ab.
+fn segment_dist(p: Point, (a, b): (Point, Point)) -> f64 {
+    let d = (b.0 - a.0, b.1 - a.1);
+    let t = (((p.0 - a.0) * d.0 + (p.1 - a.1) * d.1) / (d.0 * d.0 + d.1 * d.1)).clamp(0.0, 1.0);
+    (a.0 + d.0 * t - p.0).hypot(a.1 + d.1 * t - p.1)
+}
+
+fn lerp(a: Point, b: Point, t: f64) -> Point {
+    (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t)
+}
+
+/// Eases in and out.
+fn ease(t: f64) -> f64 {
+    t * t * (3.0 - 2.0 * t)
+}
+
 
 /// Edges drawn as if each triangle were an opaque sheet of paper:
 /// the parts of an edge that lie under a higher flap are skipped.
