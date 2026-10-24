@@ -1,13 +1,17 @@
-use rand::RngExt;
+use rand::rngs::Xoshiro256PlusPlus;
 use rand::seq::SliceRandom;
+use rand::{Rng, RngExt, SeedableRng};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Stylize};
 use ratatui::text::Span;
 use ratatui::widgets::canvas::{Canvas, Painter, Shape};
 use ratatui::{DefaultTerminal, Frame};
+use std::collections::BTreeMap;
 use std::f64::consts::TAU;
-use std::time::{Duration, Instant};
+use std::fmt;
+use std::path::PathBuf;
+use std::time::{Duration, Instant, SystemTime};
 
 /// dots on level 1; each level adds one
 const LEVEL_1_DOTS: usize = 4;
@@ -31,6 +35,104 @@ const CROSSED_COLOR: Color = Color::Indexed(174);
 /// how far the red reaches from a crossing, in braille dots (2 per cell across, 4 down)
 const CROSSED_RADIUS: usize = 4;
 
+const USAGE: &str = "\
+usage: unfld [level | seed/level] [--daily | --rand]
+
+  unfld 9          level 9 with a random seed
+  unfld ABC123/9   level 9 of seed ABC123, to replay a puzzle or share it
+  unfld --daily    today's seed, the same for everyone (changes at midnight UTC)
+  unfld --rand     a random seed, which is also the default";
+
+// ---------------------------------------------------------------------------------------------
+// Seeds and scores
+
+/// A play session's seed: 6 hex digits, short enough to read out to a friend.
+/// Together with a level it pins down one exact puzzle, written like ABC123/9.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct Seed(u32);
+
+impl Seed {
+    const MASK: u32 = (1 << 24) - 1;
+
+    fn random() -> Self {
+        Seed(rand::rng().random_range(0..=Self::MASK))
+    }
+
+    /// Today's seed, by UTC date. The day number goes through a mix of multiplies by odd
+    /// numbers and xor-shifts, each of which can be undone, so no two days share a seed
+    /// for the next 45,000 years.
+    fn daily() -> Self {
+        let secs = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+        let mut x = ((secs / 86_400) as u32).wrapping_add(0x5EED) & Self::MASK;
+        x = x.wrapping_mul(0x9E3779) & Self::MASK;
+        x ^= x >> 12;
+        x = x.wrapping_mul(0x85EBCB) & Self::MASK;
+        x ^= x >> 13;
+        Seed(x)
+    }
+
+    fn parse(s: &str) -> Option<Self> {
+        let hex = s.len() == 6 && s.chars().all(|c| c.is_ascii_hexdigit());
+        hex.then(|| Seed(u32::from_str_radix(s, 16).unwrap()))
+    }
+}
+
+impl fmt::Display for Seed {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:06X}", self.0)
+    }
+}
+
+fn parse_level(s: &str) -> Option<usize> {
+    s.parse().ok().filter(|&level| level >= 1)
+}
+
+/// Parses a puzzle code like ABC123/9.
+fn parse_code(s: &str) -> Option<(Seed, usize)> {
+    let (seed, level) = s.split_once('/')?;
+    Some((Seed::parse(seed)?, parse_level(level)?))
+}
+
+/// Fewest moves per puzzle, kept in a plain text file of `SEED/LEVEL MOVES` lines.
+struct Scores {
+    path: Option<PathBuf>,
+    best: BTreeMap<(Seed, usize), usize>,
+}
+
+impl Scores {
+    fn load() -> Self {
+        let data = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")));
+        let path = data.map(|dir| dir.join("unfld/best"));
+        let text = path.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+        let best = text
+            .lines()
+            .filter_map(|line| {
+                let (code, moves) = line.split_once(' ')?;
+                Some((parse_code(code)?, moves.trim().parse().ok()?))
+            })
+            .collect();
+        Scores { path, best }
+    }
+
+    fn get(&self, seed: Seed, level: usize) -> Option<usize> {
+        self.best.get(&(seed, level)).copied()
+    }
+
+    /// Saves a solve if it beats the old best. A score that can't be written is just lost;
+    /// it's not worth interrupting the game over.
+    fn record(&mut self, seed: Seed, level: usize, moves: usize) {
+        if self.get(seed, level).is_some_and(|best| best <= moves) {
+            return;
+        }
+        self.best.insert((seed, level), moves);
+        let Some(path) = &self.path else { return };
+        let text: String = self.best.iter().map(|((seed, level), moves)| format!("{seed}/{level} {moves}\n")).collect();
+        let _ = std::fs::create_dir_all(path.parent().unwrap()).and_then(|()| std::fs::write(path, text));
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Game state
 
@@ -52,6 +154,9 @@ struct Edge {
 }
 
 struct Game {
+    seed: Seed,
+    /// the fewest moves this puzzle has been solved in before, on this machine
+    prior_best: Option<usize>,
     /// slot[v] = the position on the circle where vertex v sits
     slot: Vec<usize>,
     edges: Vec<Edge>,
@@ -74,10 +179,12 @@ struct Game {
 }
 
 impl Game {
-    fn new(level: usize) -> Self {
+    fn new(seed: Seed, level: usize, scores: &Scores) -> Self {
+        // the same seed and level always make the same puzzle, so it can be replayed or shared
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64((seed.0 as u64) << 32 | level as u64);
         let n = level + LEVEL_1_DOTS - 1;
-        let (shape, mut flaps) = grow(n);
-        flaps.shuffle(&mut rand::rng());
+        let (shape, mut flaps) = grow(n, &mut rng);
+        flaps.shuffle(&mut rng);
 
         let mut edges: Vec<Edge> = Vec::new();
         for &[a, b, c] in &flaps {
@@ -97,6 +204,8 @@ impl Game {
         }
 
         let mut game = Game {
+            seed,
+            prior_best: scores.get(seed, level),
             slot: (0..n).collect(),
             edges,
             flaps,
@@ -109,9 +218,11 @@ impl Game {
             solved_at: None,
             touched_at: Instant::now(),
         };
-        // shuffle until there's something to untangle
+        // shuffle at least once (vertices are numbered in growth order, which would give the puzzle
+        // away), and keep going until there's something to untangle
+        game.slot.shuffle(&mut rng);
         while game.crossings() == 0 {
-            game.slot.shuffle(&mut rand::rng());
+            game.slot.shuffle(&mut rng);
         }
         game
     }
@@ -122,6 +233,17 @@ impl Game {
 
     fn solved(&self) -> bool {
         self.solved_at.is_some()
+    }
+
+    /// Whether this solve beat an earlier one.
+    fn new_best(&self) -> bool {
+        self.solved() && self.prior_best.is_some_and(|best| self.moves < best)
+    }
+
+    /// The fewest moves this puzzle has been solved in, counting this solve.
+    fn best(&self) -> Option<usize> {
+        let this = self.solved().then_some(self.moves);
+        this.into_iter().chain(self.prior_best).min()
     }
 
     /// Every pair of edges (by index) that cross in the current arrangement.
@@ -289,8 +411,7 @@ fn crosses((a, b): (usize, usize), (c, d): (usize, usize)) -> bool {
 
 /// Grows a flat sheet of triangles: each new vertex folds out from an edge on the outline,
 /// so the result is a triangulated polygon of any outline, not just a convex one.
-fn grow(n: usize) -> (Vec<Point>, Vec<[usize; 3]>) {
-    let mut rng = rand::rng();
+fn grow(n: usize, rng: &mut impl Rng) -> (Vec<Point>, Vec<[usize; 3]>) {
     'restart: loop {
         let mut pts: Vec<Point> = vec![(0.0, 0.0), (1.0, 0.0), (0.5, 3f64.sqrt() / 2.0)];
         let mut tris = vec![[0, 1, 2]];
@@ -376,8 +497,11 @@ fn cross(a: Point, b: Point) -> f64 {
     a.0 * b.1 - a.1 * b.0
 }
 
+/// Plain sqrt rather than hypot: sqrt is exact on every platform while hypot comes from the
+/// system's math library, and level generation must come out the same everywhere for a seed.
 fn dist(a: Point, b: Point) -> f64 {
-    (a.0 - b.0).hypot(a.1 - b.1)
+    let d = sub(a, b);
+    dot(d, d).sqrt()
 }
 
 fn lerp(a: Point, b: Point, t: f64) -> Point {
@@ -537,8 +661,10 @@ impl Shape for Flaps {
 }
 
 fn render(frame: &mut Frame, game: &Game) {
-    let [board, status] =
-        Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
+    let [header, board, status] =
+        Layout::vertical([Constraint::Length(1), Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
+    let best = game.best().map_or(String::new(), |best| format!(" · best {best}"));
+    frame.render_widget(Span::from(format!(" {}/{}{best}", game.seed, game.level())).dark_gray(), header);
 
     // terminal cells are ~twice as tall as wide, so widen the x range to keep the circle round
     let aspect = board.width as f64 / (board.height as f64 * 2.0);
@@ -572,16 +698,11 @@ fn render(frame: &mut Frame, game: &Game) {
         });
     frame.render_widget(canvas, board);
 
-    let level = game.level();
     let text: Span = if game.solved() {
-        format!(" level {level} solved in {} moves! enter: next level · q quit", game.moves).green().bold()
+        let new_best = if game.new_best() { " new best!" } else { "" };
+        format!(" solved in {} moves!{new_best} enter: next level · r replay · q quit", game.moves).green().bold()
     } else {
-        format!(
-            " level {level}   crossings: {}   moves: {}   ←/→ move · space swap · q quit",
-            game.crossings(),
-            game.moves
-        )
-        .into()
+        format!(" crossings: {}   moves: {}   ←/→ move · space swap · r restart · q quit", game.crossings(), game.moves).into()
     };
     frame.render_widget(text, status);
 }
@@ -590,21 +711,42 @@ fn render(frame: &mut Frame, game: &Game) {
 // Main loop
 
 fn main() -> std::io::Result<()> {
-    let level = match std::env::args().nth(1) {
-        None => 1,
-        Some(arg) => match arg.parse::<usize>() {
-            Ok(level) if level >= 1 => level,
-            _ => {
-                eprintln!("usage: unfld [level]");
-                std::process::exit(2);
-            }
-        },
+    let Some((seed, level)) = parse_args(std::env::args().skip(1)) else {
+        eprintln!("{USAGE}");
+        std::process::exit(2);
     };
-    ratatui::run(|terminal| app(terminal, level))
+    ratatui::run(|terminal| app(terminal, seed, level))
 }
 
-fn app(terminal: &mut DefaultTerminal, level: usize) -> std::io::Result<()> {
-    let mut game = Game::new(level);
+/// The seed and starting level from the command line, or None if it doesn't make sense.
+/// The seed lasts the whole session; only the level moves on.
+fn parse_args(args: impl Iterator<Item = String>) -> Option<(Seed, usize)> {
+    let (mut seed, mut level) = (None, 1);
+    for arg in args {
+        let (s, l) = match arg.as_str() {
+            "-h" | "--help" => {
+                println!("{USAGE}");
+                std::process::exit(0);
+            }
+            "--daily" => (Some(Seed::daily()), None),
+            "--rand" => (Some(Seed::random()), None),
+            code if code.contains('/') => parse_code(code).map(|(s, l)| (Some(s), Some(l)))?,
+            n => (None, Some(parse_level(n)?)),
+        };
+        // a seed can only be given once
+        if let Some(s) = s
+            && seed.replace(s).is_some()
+        {
+            return None;
+        }
+        level = l.unwrap_or(level);
+    }
+    Some((seed.unwrap_or_else(Seed::random), level))
+}
+
+fn app(terminal: &mut DefaultTerminal, seed: Seed, level: usize) -> std::io::Result<()> {
+    let mut scores = Scores::load();
+    let mut game = Game::new(seed, level, &scores);
     loop {
         game.tick();
         terminal.draw(|frame| render(frame, &game))?;
@@ -620,8 +762,14 @@ fn app(terminal: &mut DefaultTerminal, level: usize) -> std::io::Result<()> {
                 KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
                 KeyCode::Left | KeyCode::Char('h') => game.step_cursor(1),
                 KeyCode::Right | KeyCode::Char('l') => game.step_cursor(-1),
-                KeyCode::Enter | KeyCode::Char(' ') if game.solved() => game = Game::new(game.level() + 1),
-                KeyCode::Char(' ') | KeyCode::Enter => game.select(),
+                KeyCode::Char('r') => game = Game::new(seed, game.level(), &scores),
+                KeyCode::Enter | KeyCode::Char(' ') if game.solved() => game = Game::new(seed, game.level() + 1, &scores),
+                KeyCode::Char(' ') | KeyCode::Enter => {
+                    game.select();
+                    if game.solved() {
+                        scores.record(seed, game.level(), game.moves);
+                    }
+                }
                 _ => {}
             }
         }
