@@ -9,11 +9,19 @@ use ratatui::{DefaultTerminal, Frame};
 use std::f64::consts::TAU;
 use std::time::{Duration, Instant};
 
+/// a muted red (256-color palette) for the bits of edges right around a crossing
+const CROSSED_COLOR: Color = Color::Indexed(174);
+/// how far the red reaches from a crossing, in braille dots (2 per cell across, 4 down)
+const CROSSED_RADIUS: usize = 4;
+/// dots on level 1; each level adds one
 const N: usize = 4;
 const SWAP_TIME: Duration = Duration::from_millis(250);
+/// how long the cursor stays solid after a keypress before it starts blinking
+const BLINK_DELAY: Duration = Duration::from_millis(800);
+/// how long each hollow or filled phase of the blink lasts
+const BLINK_TIME: Duration = Duration::from_millis(900);
 const FRAME_TIME: Duration = Duration::from_millis(16);
 const UNFOLD_TIME: Duration = Duration::from_millis(1200);
-const FADE_TIME: Duration = Duration::from_millis(900);
 /// chance that a new flap grows off the one just added, which makes snakes and spirals instead of blobs
 const STRIP_BIAS: f64 = 0.6;
 
@@ -43,6 +51,8 @@ struct Game {
     swap: Option<Swap>,
     /// when the winning swap was made
     solved_at: Option<Instant>,
+    /// when the cursor last moved or picked, which keeps it solid for a moment
+    touched_at: Instant,
 }
 
 impl Game {
@@ -71,6 +81,7 @@ impl Game {
             moves: 0,
             swap: None,
             solved_at: None,
+            touched_at: Instant::now(),
         };
         while game.crossings() == 0 {
             game.slot.shuffle(&mut rand::rng());
@@ -78,28 +89,35 @@ impl Game {
         game
     }
 
-    fn crossings(&self) -> usize {
-        let mut count = 0;
+    /// Every pair of edges (by index) that cross in the current arrangement.
+    fn crossing_pairs(&self) -> Vec<(usize, usize)> {
+        let mut pairs = Vec::new();
         for i in 0..self.edges.len() {
             for j in i + 1..self.edges.len() {
                 let (a, b) = self.edges[i];
                 let (c, d) = self.edges[j];
                 if crosses((self.slot[a], self.slot[b]), (self.slot[c], self.slot[d])) {
-                    count += 1;
+                    pairs.push((i, j));
                 }
             }
         }
-        count
+        pairs
+    }
+
+    fn crossings(&self) -> usize {
+        self.crossing_pairs().len()
     }
 
     /// Moves the cursor one slot around the circle: +1 is counterclockwise, -1 clockwise.
     fn step_cursor(&mut self, dir: isize) {
         let n = self.slot.len() as isize;
         self.cursor = (self.cursor as isize + dir).rem_euclid(n) as usize;
+        self.touched_at = Instant::now();
     }
 
     /// First press picks the cursor's slot, second press swaps it with the picked one.
     fn select(&mut self) {
+        self.touched_at = Instant::now();
         match self.picked {
             None => self.picked = Some(self.cursor),
             Some(s) if s == self.cursor => self.picked = None,
@@ -130,9 +148,9 @@ impl Game {
         self.since_win(SWAP_TIME, UNFOLD_TIME)
     }
 
-    /// 0..1 progress of the creases dissolving, once the shape has unfolded.
+    /// 0..1 progress of the creases dissolving, which happens while the shape unfolds.
     fn fade(&self) -> f64 {
-        self.since_win(SWAP_TIME + UNFOLD_TIME, FADE_TIME)
+        self.unfold()
     }
 
     /// Where vertex v is drawn: on the circle while playing, then gliding out to the real shape.
@@ -187,6 +205,21 @@ impl Game {
         let center = ((lo.0 + hi.0) / 2.0, (lo.1 + hi.1) / 2.0);
         let radius = pts.iter().map(|p| (p.0 - center.0).hypot(p.1 - center.1)).fold(0.0, f64::max);
         pts.iter().map(|p| ((p.0 - center.0) / radius, (p.1 - center.1) / radius)).collect()
+    }
+
+    /// Whether the cursor is drawn filled: always right after a keypress, then alternating with hollow.
+    fn cursor_filled(&self) -> bool {
+        let Some(idle) = self.touched_at.elapsed().checked_sub(BLINK_DELAY) else { return true };
+        (idle.as_millis() / BLINK_TIME.as_millis()) % 2 == 1
+    }
+
+    /// How long until the cursor next flips between filled and hollow.
+    fn until_blink(&self) -> Duration {
+        let elapsed = self.touched_at.elapsed();
+        match elapsed.checked_sub(BLINK_DELAY) {
+            None => BLINK_DELAY - elapsed,
+            Some(idle) => BLINK_TIME - Duration::from_nanos((idle.as_nanos() % BLINK_TIME.as_nanos()) as u64),
+        }
     }
 
     fn animating(&self) -> bool {
@@ -287,6 +320,18 @@ fn segments_cross((a, b): (Point, Point), (c, d): (Point, Point)) -> bool {
     side(a, b, c) * side(a, b, d) < 0.0 && side(c, d, a) * side(c, d, b) < 0.0
 }
 
+/// Where two segments cross, if they do.
+fn intersection((a, b): (Point, Point), (c, d): (Point, Point)) -> Option<Point> {
+    let (r, s) = ((b.0 - a.0, b.1 - a.1), (d.0 - c.0, d.1 - c.1));
+    let denom = r.0 * s.1 - r.1 * s.0;
+    if denom == 0.0 {
+        return None;
+    }
+    let t = ((c.0 - a.0) * s.1 - (c.1 - a.1) * s.0) / denom;
+    let u = ((c.0 - a.0) * r.1 - (c.1 - a.1) * r.0) / denom;
+    ((0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)).then(|| lerp(a, b, t))
+}
+
 /// Distance from p to the nearest point of segment ab.
 fn segment_dist(p: Point, (a, b): (Point, Point)) -> f64 {
     let d = (b.0 - a.0, b.1 - a.1);
@@ -310,11 +355,15 @@ struct Flaps {
     /// triangle corners, bottom to top
     tris: Vec<[Point; 3]>,
     edges: Vec<Crease>,
-    color: Color,
     /// 0..1, how much of the internal creases has dissolved after a win
     fade: f64,
+    /// the creases are shadows cast onto the table and lower flaps, so their own flap hides them too
+    shadow: bool,
+    /// where edges cross, in canvas coordinates; creases are tinted red around these
+    crossings: Vec<Point>,
 }
 
+#[derive(Clone, Copy)]
 struct Crease {
     p: Point,
     q: Point,
@@ -322,11 +371,20 @@ struct Crease {
     z: usize,
     /// shared by two flaps, as opposed to part of the outline
     internal: bool,
+    color: Color,
 }
 
 impl Shape for Flaps {
     fn draw(&self, painter: &mut Painter) {
-        for (e, &Crease { p, q, z, internal }) in self.edges.iter().enumerate() {
+        let crossings: Vec<_> = self.crossings.iter().filter_map(|c| painter.get_point(c.0, c.1)).collect();
+        // braille dots are about square on screen, so plain distance in dots looks round
+        let near_crossing = |(x, y): (usize, usize)| {
+            crossings.iter().any(|&(cx, cy)| {
+                let (dx, dy) = (cx.abs_diff(x), cy.abs_diff(y));
+                dx * dx + dy * dy <= CROSSED_RADIUS * CROSSED_RADIUS
+            })
+        };
+        for (e, &Crease { p, q, z, internal, color }) in self.edges.iter().enumerate() {
             // one sample per braille dot along the longer axis
             let steps = match (painter.get_point(p.0, p.1), painter.get_point(q.0, q.1)) {
                 (Some(a), Some(b)) => a.0.abs_diff(b.0).max(a.1.abs_diff(b.1)).max(1),
@@ -340,9 +398,10 @@ impl Shape for Flaps {
                 }
                 let t = i as f64 / steps as f64;
                 let pt = (p.0 + (q.0 - p.0) * t, p.1 + (q.1 - p.1) * t);
-                let covered = self.tris[z + 1..].iter().any(|tri| inside(tri, pt));
+                let above = if self.shadow { z } else { z + 1 };
+                let covered = self.tris[above..].iter().any(|tri| inside(tri, pt));
                 if !covered && let Some((x, y)) = painter.get_point(pt.0, pt.1) {
-                    painter.paint(x, y, self.color);
+                    painter.paint(x, y, if near_crossing((x, y)) { CROSSED_COLOR } else { color });
                 }
             }
         }
@@ -364,18 +423,38 @@ fn pos(slot: usize, n: usize) -> (f64, f64) {
 }
 
 fn main() -> std::io::Result<()> {
-    ratatui::run(app)
+    let level = match std::env::args().nth(1) {
+        None => 1,
+        Some(arg) => match arg.parse::<usize>() {
+            Ok(level) if level >= 1 => level,
+            _ => {
+                eprintln!("usage: unfld [level]");
+                std::process::exit(2);
+            }
+        },
+    };
+    ratatui::run(|terminal| app(terminal, level))
 }
 
-fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
-    let mut game = Game::new(N);
+fn app(terminal: &mut DefaultTerminal, level: usize) -> std::io::Result<()> {
+    let mut game = Game::new(level + N - 1);
     loop {
         if game.swap.as_ref().is_some_and(|s| s.started.elapsed() >= SWAP_TIME) {
             game.swap = None;
         }
         terminal.draw(|frame| render(frame, &game))?;
-        // while animating, wake up every frame to redraw; otherwise sleep until a key
-        if game.animating() && !event::poll(FRAME_TIME)? {
+        // while animating, wake up every frame to redraw; otherwise sleep until a key or the next blink,
+        // and once solved there's no cursor left to blink
+        let wait = if game.animating() {
+            Some(FRAME_TIME)
+        } else if game.solved_at.is_none() {
+            Some(game.until_blink())
+        } else {
+            None
+        };
+        if let Some(wait) = wait
+            && !event::poll(wait)?
+        {
             continue;
         }
         if let Event::Key(key) = event::read()?
@@ -415,35 +494,72 @@ fn render(frame: &mut Frame, game: &Game) {
                     q: game.vertex_pos(b),
                     z: game.flaps.iter().rposition(owns).unwrap_or(0),
                     internal: game.flaps.iter().filter(|f| owns(f)).count() == 2,
+                    color: edge_color,
                 }
             })
             .collect(),
-        color: edge_color,
         fade: game.fade(),
+        shadow: false,
+        crossings: game
+            .crossing_pairs()
+            .into_iter()
+            .filter_map(|(i, j)| {
+                let seg = |(a, b): (usize, usize)| (game.vertex_pos(a), game.vertex_pos(b));
+                intersection(seg(game.edges[i]), seg(game.edges[j]))
+            })
+            .collect(),
+    };
+    // each flap's free edges cast a shadow one whole cell down and right, onto the table and any
+    // flaps beneath it; a cell holds one color, so a smaller offset would mostly land in cells the
+    // creases already own and get painted over. A crease shared by two flaps joins them into one
+    // sheet rather than lying on top, so it casts nothing.
+    let cell = (2.0 * pad * aspect / board.width as f64, 2.0 * pad / board.height as f64);
+    let shadow = Flaps {
+        tris: flaps.tris.clone(),
+        edges: flaps
+            .edges
+            .iter()
+            .filter(|c| !c.internal)
+            .map(|&c| Crease {
+                p: (c.p.0 + cell.0, c.p.1 - cell.1),
+                q: (c.q.0 + cell.0, c.q.1 - cell.1),
+                color: Color::DarkGray,
+                ..c
+            })
+            .collect(),
+        fade: 0.0,
+        shadow: true,
+        crossings: Vec::new(),
     };
     let canvas = Canvas::default()
         .x_bounds([-pad * aspect, pad * aspect])
         .y_bounds([-pad, pad])
         .paint(|ctx| {
+            ctx.draw(&shadow);
+            ctx.layer();
             ctx.draw(&flaps);
-            for v in 0..n {
+            // the cursor goes away once the puzzle is solved
+            for v in (0..n).filter(|_| game.solved_at.is_none()) {
                 let s = game.slot[v];
                 let (x, y) = game.vertex_pos(v);
                 // plain vertices are just where edges meet; only the cursor and pick get a marker
-                if game.picked == Some(s) {
-                    ctx.print(x, y, "●".yellow().bold());
-                } else if game.cursor == s {
-                    ctx.print(x, y, "●".cyan().bold());
+                let color = if game.picked == Some(s) { Color::Yellow } else { Color::Cyan };
+                if game.cursor == s {
+                    let glyph = if game.cursor_filled() { "●" } else { "○" };
+                    ctx.print(x, y, glyph.fg(color).bold());
+                } else if game.picked == Some(s) {
+                    ctx.print(x, y, "●".fg(color).bold());
                 }
             }
         });
     frame.render_widget(canvas, board);
 
+    let level = n + 1 - N;
     let text: Span = if crossings == 0 {
-        format!(" solved in {} moves! enter: next level · q quit", game.moves).green().bold()
+        format!(" level {level} solved in {} moves! enter: next level · q quit", game.moves).green().bold()
     } else {
         format!(
-            " crossings: {crossings}   moves: {}   ←/→ move · space swap · q quit",
+            " level {level}   crossings: {crossings}   moves: {}   ←/→ move · space swap · q quit",
             game.moves
         )
         .into()
