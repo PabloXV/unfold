@@ -30,10 +30,32 @@ const FRAME_TIME: Duration = Duration::from_millis(16);
 /// chance that a new flap grows off the one just added, which makes snakes and spirals instead of blobs
 const STRIP_BIAS: f64 = 0.6;
 
-/// a muted red (256-color palette) for the bits of edges right around a crossing
+/// a muted red (256-color palette) for crossings and the bits of edges right around them
 const CROSSED_COLOR: Color = Color::Indexed(174);
 /// how far the red reaches from a crossing, in braille dots (2 per cell across, 4 down)
 const CROSSED_RADIUS: usize = 4;
+
+/// Colors for everything on screen. With NO_COLOR set (see no-color.org) they all become the
+/// terminal's default and glyphs carry what color would have: the picked dot gets its own symbol,
+/// and shadows are left out since they'd just look like doubled lines.
+#[derive(Clone, Copy)]
+struct Palette {
+    color: bool,
+}
+
+impl Palette {
+    fn from_env() -> Self {
+        Palette { color: std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty()) }
+    }
+
+    fn pick(self, color: Color) -> Color {
+        if self.color { color } else { Color::Reset }
+    }
+
+    fn picked_glyph(self) -> &'static str {
+        if self.color { "●" } else { "◉" }
+    }
+}
 
 const USAGE: &str = "\
 usage: unfld [level | seed/level] [--daily | --rand]
@@ -264,6 +286,21 @@ impl Game {
         self.crossing_pairs().len()
     }
 
+    /// Where crossing edges meet on screen right now. A crossing under a higher flap than
+    /// either edge can't be seen, so it isn't included; the count still includes it.
+    fn crossing_points(&self) -> Vec<Point> {
+        let flaps = self.flap_pos();
+        self.crossing_pairs()
+            .into_iter()
+            .filter_map(|(i, j)| {
+                let (a, b) = (&self.edges[i], &self.edges[j]);
+                let pt = intersection(self.edge_pos(a), self.edge_pos(b))?;
+                let hidden = flaps[a.z.min(b.z) + 1..].iter().any(|f| inside(f, pt));
+                (!hidden).then_some(pt)
+            })
+            .collect()
+    }
+
     fn vertex_at(&self, s: usize) -> usize {
         self.slot.iter().position(|&x| x == s).unwrap()
     }
@@ -319,6 +356,15 @@ impl Game {
         } else {
             None
         }
+    }
+
+    fn edge_pos(&self, e: &Edge) -> (Point, Point) {
+        (self.vertex_pos(e.a), self.vertex_pos(e.b))
+    }
+
+    /// Each flap's corners as drawn, bottom to top.
+    fn flap_pos(&self) -> Vec<[Point; 3]> {
+        self.flaps.iter().map(|f| f.map(|v| self.vertex_pos(v))).collect()
     }
 
     /// Where vertex v is drawn: on the circle while playing, then gliding out to the real shape.
@@ -568,8 +614,9 @@ struct Flaps {
     fade: f64,
     /// the creases are shadows cast onto the table and lower flaps, so their own flap hides them too
     shadow: bool,
-    /// where edges cross, in canvas coordinates; creases are tinted red around these
+    /// where edges cross, in canvas coordinates; creases are tinted around these
     crossings: Vec<Point>,
+    crossed_color: Color,
 }
 
 #[derive(Clone, Copy)]
@@ -585,26 +632,22 @@ struct Crease {
 
 impl Flaps {
     /// The paper as it currently lies: gray while tangled, green once solved.
-    fn paper(game: &Game) -> Self {
-        let color = if game.solved() { Color::Green } else { Color::Gray };
-        let seg = |e: &Edge| (game.vertex_pos(e.a), game.vertex_pos(e.b));
+    fn paper(game: &Game, palette: Palette, crossings: Vec<Point>) -> Self {
+        let color = palette.pick(if game.solved() { Color::Green } else { Color::Gray });
         Flaps {
-            tris: game.flaps.iter().map(|f| f.map(|v| game.vertex_pos(v))).collect(),
+            tris: game.flap_pos(),
             creases: game
                 .edges
                 .iter()
                 .map(|e| {
-                    let (p, q) = seg(e);
+                    let (p, q) = game.edge_pos(e);
                     Crease { p, q, z: e.z, internal: e.internal, color }
                 })
                 .collect(),
             fade: game.unfold(),
             shadow: false,
-            crossings: game
-                .crossing_pairs()
-                .into_iter()
-                .filter_map(|(i, j)| intersection(seg(&game.edges[i]), seg(&game.edges[j])))
-                .collect(),
+            crossings,
+            crossed_color: palette.pick(CROSSED_COLOR),
         }
     }
 
@@ -623,6 +666,7 @@ impl Flaps {
             fade: 0.0,
             shadow: true,
             crossings: Vec::new(),
+            crossed_color: Color::DarkGray,
         }
     }
 }
@@ -653,54 +697,82 @@ impl Shape for Flaps {
                 let pt = lerp(p, q, i as f64 / steps as f64);
                 let covered = self.tris[above..].iter().any(|tri| inside(tri, pt));
                 if !covered && let Some((x, y)) = painter.get_point(pt.0, pt.1) {
-                    painter.paint(x, y, if near_crossing((x, y)) { CROSSED_COLOR } else { color });
+                    painter.paint(x, y, if near_crossing((x, y)) { self.crossed_color } else { color });
                 }
             }
         }
     }
 }
 
-fn render(frame: &mut Frame, game: &Game) {
+fn render(frame: &mut Frame, game: &Game, palette: Palette) {
     let [header, board, status] =
         Layout::vertical([Constraint::Length(1), Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
     let best = game.best().map_or(String::new(), |best| format!(" · best {best}"));
-    frame.render_widget(Span::from(format!(" {}/{}{best}", game.seed, game.level())).dark_gray(), header);
+    frame.render_widget(Span::from(format!(" {}/{}{best}", game.seed, game.level())).fg(palette.pick(Color::DarkGray)), header);
 
     // terminal cells are ~twice as tall as wide, so widen the x range to keep the circle round
     let aspect = board.width as f64 / (board.height as f64 * 2.0);
     let pad = 1.2;
-    let paper = Flaps::paper(game);
+    let (half_w, half_h) = (pad * aspect, pad);
+    let (cols, rows) = (board.width as f64, board.height as f64);
+    // Text printed on the canvas and braille dots round positions to cells differently, so text
+    // printed at a point can land a cell away from the dots drawn there. This finds the cell
+    // holding the point's dot (the same math as Painter::get_point) and returns its center in the
+    // terms text placement uses.
+    let print_at = |(x, y): Point| -> Point {
+        let dot_x = ((x + half_w) * (cols * 2.0 - 1.0) / (2.0 * half_w)).round();
+        let dot_y = ((half_h - y) * (rows * 4.0 - 1.0) / (2.0 * half_h)).round();
+        let (col, row) = ((dot_x / 2.0).floor(), (dot_y / 4.0).floor());
+        (
+            -half_w + (col + 0.5).min(cols - 1.0) * 2.0 * half_w / (cols - 1.0),
+            half_h - (row + 0.5).min(rows - 1.0) * 2.0 * half_h / (rows - 1.0),
+        )
+    };
+    let crossings = game.crossing_points();
+    let paper = Flaps::paper(game, palette, crossings.clone());
     // the shadow sits one whole cell down and right: a cell holds one color, so a smaller
     // offset would mostly land in cells the creases already own and get painted over
-    let shadow = paper.shadow((2.0 * pad * aspect / board.width as f64, -2.0 * pad / board.height as f64));
+    let shadow = paper.shadow((2.0 * half_w / cols, -2.0 * half_h / rows));
     let canvas = Canvas::default()
-        .x_bounds([-pad * aspect, pad * aspect])
-        .y_bounds([-pad, pad])
+        .x_bounds([-half_w, half_w])
+        .y_bounds([-half_h, half_h])
         .paint(|ctx| {
-            ctx.draw(&shadow);
-            ctx.layer();
+            if palette.color {
+                ctx.draw(&shadow);
+                ctx.layer();
+            }
             ctx.draw(&paper);
+            for &pt in &crossings {
+                let (x, y) = print_at(pt);
+                ctx.print(x, y, "×".fg(palette.pick(CROSSED_COLOR)));
+            }
             // plain vertices are just where edges meet; only the cursor and pick get a marker,
             // and both go away once the puzzle is solved
             if game.solved() {
                 return;
             }
             let mut mark = |s: usize, glyph: &'static str, color: Color| {
-                let (x, y) = game.vertex_pos(game.vertex_at(s));
-                ctx.print(x, y, glyph.fg(color).bold());
+                let (x, y) = print_at(game.vertex_pos(game.vertex_at(s)));
+                ctx.print(x, y, glyph.fg(palette.pick(color)).bold());
             };
             if let Some(s) = game.picked {
-                mark(s, "●", Color::Yellow);
+                mark(s, palette.picked_glyph(), Color::Yellow);
             }
-            let glyph = if game.cursor_filled() { "●" } else { "○" };
-            let color = if game.picked == Some(game.cursor) { Color::Yellow } else { Color::Cyan };
-            mark(game.cursor, glyph, color);
+            let on_picked = game.picked == Some(game.cursor);
+            let glyph = match (game.cursor_filled(), on_picked) {
+                (false, _) => "○",
+                (true, false) => "●",
+                (true, true) => palette.picked_glyph(),
+            };
+            mark(game.cursor, glyph, if on_picked { Color::Yellow } else { Color::Cyan });
         });
     frame.render_widget(canvas, board);
 
     let text: Span = if game.solved() {
         let new_best = if game.new_best() { " new best!" } else { "" };
-        format!(" solved in {} moves!{new_best} enter: next level · r replay · q quit", game.moves).green().bold()
+        format!(" solved in {} moves!{new_best} enter: next level · r replay · q quit", game.moves)
+            .fg(palette.pick(Color::Green))
+            .bold()
     } else {
         format!(" crossings: {}   moves: {}   ←/→ move · space swap · r restart · q quit", game.crossings(), game.moves).into()
     };
@@ -715,7 +787,7 @@ fn main() -> std::io::Result<()> {
         eprintln!("{USAGE}");
         std::process::exit(2);
     };
-    ratatui::run(|terminal| app(terminal, seed, level))
+    ratatui::run(|terminal| app(terminal, seed, level, Palette::from_env()))
 }
 
 /// The seed and starting level from the command line, or None if it doesn't make sense.
@@ -744,12 +816,12 @@ fn parse_args(args: impl Iterator<Item = String>) -> Option<(Seed, usize)> {
     Some((seed.unwrap_or_else(Seed::random), level))
 }
 
-fn app(terminal: &mut DefaultTerminal, seed: Seed, level: usize) -> std::io::Result<()> {
+fn app(terminal: &mut DefaultTerminal, seed: Seed, level: usize, palette: Palette) -> std::io::Result<()> {
     let mut scores = Scores::load();
     let mut game = Game::new(seed, level, &scores);
     loop {
         game.tick();
-        terminal.draw(|frame| render(frame, &game))?;
+        terminal.draw(|frame| render(frame, &game, palette))?;
         if let Some(wait) = game.wake_after()
             && !event::poll(wait)?
         {
