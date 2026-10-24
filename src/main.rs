@@ -8,7 +8,7 @@ use ratatui::text::Span;
 use ratatui::widgets::canvas::{Canvas, Painter, Shape};
 use ratatui::{DefaultTerminal, Frame};
 use std::collections::BTreeMap;
-use std::f64::consts::TAU;
+use std::f64::consts::{PI, TAU};
 use std::fmt;
 use std::ops::{Add, Mul, Sub};
 use std::path::PathBuf;
@@ -701,6 +701,17 @@ impl Board {
         Point::new(2.0 * self.half_w / self.cols, 2.0 * self.half_h / self.rows)
     }
 
+    /// Whether a block of cells in the top-left corner clears the circle by at least a cell.
+    fn corner_is_free(&self, width: u16, height: u16) -> bool {
+        let cell = self.cell();
+        if width as f64 > self.cols || height as f64 > self.rows {
+            return false;
+        }
+        let inner = Point::new(-self.half_w + width as f64 * cell.x, self.half_h - height as f64 * cell.y);
+        let nearest = Point::new(inner.x.min(0.0), inner.y.max(0.0));
+        nearest.dist(Point::ZERO) > 1.0 + cell.y
+    }
+
     /// Canvas text and braille dots round to cells differently, so text printed at a point can
     /// land a cell away from the dot drawn there. This finds the dot's cell (as Painter::get_point
     /// does) and returns the point that text placement maps to that cell.
@@ -715,12 +726,8 @@ impl Board {
     }
 }
 
-fn render(frame: &mut Frame, game: &Game, palette: Palette) {
-    let [header, area, status] =
-        Layout::vertical([Constraint::Length(1), Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
-    let best = game.best().map_or(String::new(), |best| format!(" · best {best}"));
-    frame.render_widget(Span::from(format!(" {}/{}{best}", game.seed, game.level())).fg(palette.pick(Color::DarkGray)), header);
-
+fn render(frame: &mut Frame, game: &Game, title: &Title, palette: Palette) {
+    let [area, status] = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
     let board = Board::new(area);
     let crossings = game.visible_crossings();
     let paper = Flaps::paper(game, palette, crossings.clone());
@@ -762,6 +769,17 @@ fn render(frame: &mut Frame, game: &Game, palette: Palette) {
         });
     frame.render_widget(canvas, area);
 
+    // the title and seed sit over the board's top-left corner, which the centered circle leaves
+    // empty unless the terminal is narrow; then only the seed shows
+    let mut info_row = area.y;
+    if board.corner_is_free(Title::WIDTH, Title::HEIGHT + 1) {
+        title.render(frame, Rect { width: Title::WIDTH, height: Title::HEIGHT, ..area }, palette);
+        info_row += Title::HEIGHT;
+    }
+    let best = game.best().map_or(String::new(), |best| format!(" · best {best}"));
+    let info = Span::from(format!(" {}/{}{best}", game.seed, game.level())).fg(palette.pick(Color::DarkGray));
+    frame.render_widget(info, Rect { y: info_row, height: 1, ..area });
+
     let text: Span = if game.solved() {
         let new_best = if game.new_best() { " new best!" } else { "" };
         format!(" solved in {} moves!{new_best} enter: next level · r replay · q quit", game.moves)
@@ -771,6 +789,169 @@ fn render(frame: &mut Frame, game: &Game, palette: Palette) {
         format!(" crossings: {}   moves: {}   ←/→ move · space swap · r restart · q quit", game.crossings(), game.moves).into()
     };
     frame.render_widget(text, status);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Title
+
+/// Darker than DarkGray: at this size a lighter shadow competes with the letters.
+const TITLE_SHADOW: Color = Color::Indexed(237);
+
+/// Lowercase "unfold" in a 3×5 pixel font.
+const TITLE_LETTERS: [[&str; 5]; 6] = [
+    ["...", "...", "X.X", "X.X", "XXX"],
+    ["...", "...", "XX.", "X.X", "X.X"],
+    [".XX", "X..", "XX.", "X..", "X.."],
+    ["...", "...", "XXX", "X.X", "XXX"],
+    ["XX.", ".X.", ".X.", ".X.", "XXX"],
+    ["..X", "..X", "XXX", "X.X", "XXX"],
+];
+
+fn title_pixel(row: usize, col: usize) -> bool {
+    let (letter, x) = (col / 4, col % 4);
+    row < 5 && letter < TITLE_LETTERS.len() && x < 3 && TITLE_LETTERS[letter][row].as_bytes()[x] == b'X'
+}
+
+/// The title on a slip of paper that starts folded up, unfolds one triangle at a time to reveal
+/// the letters, then dissolves away and leaves them.
+struct Title {
+    started: Instant,
+}
+
+impl Title {
+    const WIDTH: u16 = 26;
+    const HEIGHT: u16 = 5;
+    const SEGMENTS: usize = TITLE_LETTERS.len();
+    const FIRST_FLIP: Duration = Duration::from_millis(300);
+    const FLIP_STEP: Duration = Duration::from_millis(90);
+    const FLIP_TIME: Duration = Duration::from_millis(300);
+    const DISSOLVE_TIME: Duration = Duration::from_millis(600);
+
+    fn flip_delay(k: usize) -> Duration {
+        Self::FIRST_FLIP + Self::FLIP_STEP * (k as u32 - 1)
+    }
+
+    fn dissolve_delay() -> Duration {
+        Self::flip_delay(2 * Self::SEGMENTS - 1) + Self::FLIP_TIME + Duration::from_millis(200)
+    }
+
+    fn animating(&self) -> bool {
+        self.started.elapsed() < Self::dissolve_delay() + Self::DISSOLVE_TIME
+    }
+
+    fn unfolded(&self, k: usize) -> f64 {
+        if k == 0 { 1.0 } else { progress(self.started, Self::flip_delay(k), Self::FLIP_TIME) }
+    }
+
+    /// The flat slip as a zigzag strip of triangles, each sharing an edge with the one before.
+    fn strip() -> Vec<[Point; 3]> {
+        let (w, h) = (Self::WIDTH as f64, Self::HEIGHT as f64);
+        let x = |i: usize| 0.5 + i as f64 * (w - 1.0) / Self::SEGMENTS as f64;
+        let (top, bottom) = (|i| Point::new(x(i), h - 0.5), |i| Point::new(x(i), 0.5));
+        (0..Self::SEGMENTS)
+            .flat_map(|i| {
+                let (a, b, c, d) = (top(i), bottom(i), top(i + 1), bottom(i + 1));
+                if i % 2 == 0 { [[a, b, d], [a, d, c]] } else { [[a, b, c], [b, d, c]] }
+            })
+            .collect()
+    }
+
+    /// Where triangle k is now: each hinge back to the first swings its part of the strip over,
+    /// alternating directions like an accordion.
+    fn pose(&self, strip: &[[Point; 3]], k: usize) -> [Point; 3] {
+        strip[k].map(|p| {
+            let mut v = [p.x, p.y, 0.0];
+            for j in (1..=k).rev() {
+                let shared: Vec<Point> = strip[j].iter().copied().filter(|q| strip[j - 1].contains(q)).collect();
+                let direction = if j % 2 == 0 { 1.0 } else { -1.0 };
+                v = rotate_about(v, (shared[0], shared[1]), direction * PI * (1.0 - ease(self.unfolded(j))));
+            }
+            Point::new(v[0], v[1])
+        })
+    }
+
+    /// Whether p shows a letter yet: its triangle has landed flat and no folded flap covers it.
+    fn revealed(&self, strip: &[[Point; 3]], now: &[[Point; 3]], p: Point) -> bool {
+        let Some(k) = strip.iter().position(|t| touches(t, p)) else { return false };
+        self.unfolded(k) >= 1.0 && !(k + 1..strip.len()).any(|j| self.unfolded(j) < 1.0 && inside(&now[j], p))
+    }
+
+    fn render(&self, frame: &mut Frame, area: Rect, palette: Palette) {
+        if area.width < Self::WIDTH || area.height < Self::HEIGHT {
+            return;
+        }
+        let strip = Self::strip();
+        let now: Vec<[Point; 3]> = (0..strip.len()).map(|k| self.pose(&strip, k)).collect();
+        let dissolve = progress(self.started, Self::dissolve_delay(), Self::DISSOLVE_TIME);
+        if dissolve < 1.0 {
+            let paper = Flaps {
+                creases: now
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(k, t)| (0..3).map(move |i| Crease { p: t[i], q: t[(i + 1) % 3], top_flap: k, shared: true }))
+                    .collect(),
+                tris: now.clone(),
+                color: palette.pick(Color::Gray),
+                dissolve,
+                is_shadow: false,
+                crossings: Vec::new(),
+                crossed_color: Color::Reset,
+            };
+            let canvas = Canvas::default()
+                .x_bounds([0.0, Self::WIDTH as f64])
+                .y_bounds([0.0, Self::HEIGHT as f64])
+                .paint(|ctx| ctx.draw(&paper));
+            frame.render_widget(canvas, area);
+        }
+
+        // letter pixels are drawn two to a cell with half blocks; the shadow sits one pixel down and right
+        let text = |r: usize, c: usize| title_pixel(r, c);
+        let shadow = |r: usize, c: usize| palette.color && !text(r, c) && r > 0 && c > 0 && text(r - 1, c - 1);
+        let buf = frame.buffer_mut();
+        for row in 1..Self::HEIGHT - 1 {
+            for col in 1..Self::WIDTH - 1 {
+                let center = Point::new(col as f64 + 0.5, (Self::HEIGHT - row) as f64 - 0.5);
+                if !self.revealed(&strip, &now, center) {
+                    continue;
+                }
+                let (r, c) = (2 * (row as usize - 1), col as usize - 1);
+                let (ink, shade) = (Color::Reset, TITLE_SHADOW);
+                let (glyph, fg, bg) = match ((text(r, c), shadow(r, c)), (text(r + 1, c), shadow(r + 1, c))) {
+                    ((true, _), (true, _)) => ('█', ink, Color::Reset),
+                    ((true, _), (_, true)) => ('▀', ink, shade),
+                    ((_, true), (true, _)) => ('▄', ink, shade),
+                    ((true, _), _) => ('▀', ink, Color::Reset),
+                    (_, (true, _)) => ('▄', ink, Color::Reset),
+                    ((_, true), (_, true)) => ('█', shade, Color::Reset),
+                    ((_, true), _) => ('▀', shade, Color::Reset),
+                    (_, (_, true)) => ('▄', shade, Color::Reset),
+                    _ => continue,
+                };
+                buf[(area.x + col, area.y + row)].set_char(glyph).set_fg(fg).set_bg(bg);
+            }
+        }
+    }
+}
+
+/// Rotates a point about the axis through a hinge lying flat in the plane.
+fn rotate_about(v: [f64; 3], (a, b): (Point, Point), angle: f64) -> [f64; 3] {
+    let axis = (b - a) * (1.0 / a.dist(b));
+    let rel = [v[0] - a.x, v[1] - a.y, v[2]];
+    let (sin, cos) = angle.sin_cos();
+    let along = (axis.x * rel[0] + axis.y * rel[1]) * (1.0 - cos);
+    let turned = [axis.y * rel[2], -axis.x * rel[2], axis.x * rel[1] - axis.y * rel[0]];
+    [
+        a.x + rel[0] * cos + turned[0] * sin + axis.x * along,
+        a.y + rel[1] * cos + turned[1] * sin + axis.y * along,
+        rel[2] * cos + turned[2] * sin,
+    ]
+}
+
+/// Inside or on the border.
+fn touches(&[a, b, c]: &[Point; 3], p: Point) -> bool {
+    let s = [side(a, b, p), side(b, c, p), side(c, a, p)];
+    let eps = 1e-9;
+    s.iter().all(|&d| d >= -eps) || s.iter().all(|&d| d <= eps)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -810,10 +991,12 @@ fn parse_args(args: impl Iterator<Item = String>) -> Option<(Seed, usize)> {
 fn app(terminal: &mut DefaultTerminal, seed: Seed, level: usize, palette: Palette) -> std::io::Result<()> {
     let mut scores = Scores::load();
     let mut game = Game::new(seed, level, &scores);
+    let title = Title { started: Instant::now() };
     loop {
         game.tick();
-        terminal.draw(|frame| render(frame, &game, palette))?;
-        if let Some(wait) = game.wake_after()
+        terminal.draw(|frame| render(frame, &game, &title, palette))?;
+        let wait = if title.animating() { Some(FRAME_TIME) } else { game.wake_after() };
+        if let Some(wait) = wait
             && !event::poll(wait)?
         {
             continue;
