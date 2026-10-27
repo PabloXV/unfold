@@ -17,15 +17,17 @@ use std::time::{Duration, Instant, SystemTime};
 
 const LEVEL_1_DOTS: usize = 4;
 
-const SWAP_TIME: Duration = Duration::from_millis(250);
+const SLIDE_TIME: Duration = Duration::from_millis(150);
 const UNFOLD_TIME: Duration = Duration::from_millis(1200);
 const BLINK_DELAY: Duration = Duration::from_millis(800);
 const BLINK_TIME: Duration = Duration::from_millis(900);
 const FRAME_TIME: Duration = Duration::from_millis(16);
 const LIFT_TIME: Duration = Duration::from_millis(120);
 const COPIED_TIME: Duration = Duration::from_millis(1500);
+/// How long a first press of r waits for the second that restarts.
+const RESTART_TIME: Duration = Duration::from_millis(2000);
 
-/// How far the hovered and picked dots stand out from the circle, as a fraction of its radius.
+/// How far the hovered and carried dots stand out from the circle, as a fraction of its radius.
 const LIFT: f64 = 0.06;
 
 /// Chance that a new flap grows off the newest one: higher makes snakes, lower makes blobs.
@@ -159,7 +161,8 @@ impl Scores {
         let data = std::env::var_os("XDG_DATA_HOME")
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")));
-        let path = data.map(|dir| dir.join("unfld/best"));
+        // not "best", which held scores from when a move was a swap
+        let path = data.map(|dir| dir.join("unfld/scores"));
         let text = path.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
         let best = text
             .lines()
@@ -191,7 +194,7 @@ impl Scores {
     }
 }
 
-/// With NO_COLOR set (no-color.org) everything uses the terminal's default color, the picked dot
+/// With NO_COLOR set (no-color.org) everything uses the terminal's default color, the carried dot
 /// gets its own glyph, and shadows are left out since they'd look like doubled lines.
 #[derive(Clone, Copy)]
 struct Palette {
@@ -215,10 +218,17 @@ impl Palette {
 // ---------------------------------------------------------------------------------------------
 // Game state
 
-struct Swap {
-    a: usize,
-    b: usize,
+/// Every dot gliding from where it was drawn when the slide began to where it now belongs.
+struct Slide {
+    from: Vec<Point>,
     started: Instant,
+}
+
+/// A dot picked up and walked around the circle, pushing the others along one slot at a time.
+struct Carry {
+    v: usize,
+    /// Where every dot was at pick up, to put them back.
+    before: Vec<usize>,
 }
 
 struct Edge {
@@ -239,15 +249,16 @@ struct Game {
     shape: Vec<Point>,
     unfolded: Vec<Point>,
     cursor: usize,
-    picked: Option<usize>,
+    carry: Option<Carry>,
     moves: usize,
-    swap: Option<Swap>,
+    slide: Option<Slide>,
     solved_at: Option<Instant>,
     touched_at: Instant,
-    /// Per slot, from 0 on the circle to 1 fully lifted out.
+    /// Per vertex, from 0 on the circle to 1 fully lifted out.
     lift: Vec<f64>,
     ticked_at: Instant,
     copied_at: Option<Instant>,
+    restart_asked_at: Option<Instant>,
 }
 
 impl Game {
@@ -265,14 +276,15 @@ impl Game {
             shape,
             unfolded: Vec::new(),
             cursor: 0,
-            picked: None,
+            carry: None,
             moves: 0,
-            swap: None,
+            slide: None,
             solved_at: None,
             touched_at: Instant::now(),
             lift: vec![0.0; n],
             ticked_at: Instant::now(),
             copied_at: None,
+            restart_asked_at: None,
         };
         // always shuffle at least once: vertices are numbered in growth order, which gives the puzzle away
         loop {
@@ -297,7 +309,16 @@ impl Game {
     }
 
     fn until_copied_fades(&self) -> Option<Duration> {
-        COPIED_TIME.checked_sub(self.copied_at?.elapsed()).filter(|d| !d.is_zero())
+        time_left(self.copied_at, COPIED_TIME)
+    }
+
+    fn until_restart_lapses(&self) -> Option<Duration> {
+        time_left(self.restart_asked_at, RESTART_TIME)
+    }
+
+    /// Whether restarting would lose anything.
+    fn in_progress(&self) -> bool {
+        !self.solved() && (self.moves > 0 || self.carry.is_some())
     }
 
     fn solved(&self) -> bool {
@@ -346,68 +367,92 @@ impl Game {
         self.slot_of.iter().position(|&s| s == slot).unwrap()
     }
 
-    /// +1 is counterclockwise, -1 clockwise.
+    /// +1 is counterclockwise, -1 clockwise. A carried dot comes along, trading places with the
+    /// dot it steps onto.
     fn step_cursor(&mut self, dir: isize) {
         let n = self.slot_of.len() as isize;
-        self.cursor = (self.cursor as isize + dir).rem_euclid(n) as usize;
+        let next = (self.cursor as isize + dir).rem_euclid(n) as usize;
+        if let Some(v) = self.carry.as_ref().map(|c| c.v) {
+            self.begin_slide();
+            let w = self.vertex_at(next);
+            self.slot_of.swap(v, w);
+        }
+        self.cursor = next;
         self.touched_at = Instant::now();
     }
 
+    /// Picks up the dot under the cursor, or sets the carried one down. Setting it down between
+    /// the same two dots it left changes nothing, so it isn't a move.
     fn select(&mut self) {
         self.touched_at = Instant::now();
-        match self.picked {
-            None => self.picked = Some(self.cursor),
-            Some(s) if s == self.cursor => self.picked = None,
-            Some(s) => {
-                let (a, b) = (self.vertex_at(s), self.vertex_at(self.cursor));
-                self.slot_of.swap(a, b);
-                self.picked = None;
-                self.moves += 1;
-                self.swap = Some(Swap { a, b, started: Instant::now() });
-                if self.crossings() == 0 {
-                    self.solved_at = Some(Instant::now());
-                    self.unfolded = self.unfold_target();
-                }
-            }
+        let Some(carry) = self.carry.take() else {
+            self.carry = Some(Carry { v: self.vertex_at(self.cursor), before: self.slot_of.clone() });
+            return;
+        };
+        if neighbors(&self.slot_of, carry.v) == neighbors(&carry.before, carry.v) {
+            return;
+        }
+        self.moves += 1;
+        if self.crossings() == 0 {
+            self.solved_at = Some(Instant::now());
+            self.unfolded = self.unfold_target();
         }
     }
 
+    fn put_back(&mut self) {
+        let Some(carry) = self.carry.take() else { return };
+        self.begin_slide();
+        self.slot_of = carry.before;
+        self.cursor = self.slot_of[carry.v];
+        self.touched_at = Instant::now();
+    }
+
+    fn carrying(&self) -> bool {
+        self.carry.is_some()
+    }
+
+    /// Call before moving dots, so they glide from where they're drawn, even mid-slide.
+    fn begin_slide(&mut self) {
+        let from = (0..self.slot_of.len()).map(|v| self.circle_pos(v)).collect();
+        self.slide = Some(Slide { from, started: Instant::now() });
+    }
+
     fn tick(&mut self) {
-        if self.swap.as_ref().is_some_and(|s| s.started.elapsed() >= SWAP_TIME) {
-            self.swap = None;
+        if self.slide.as_ref().is_some_and(|s| s.started.elapsed() >= SLIDE_TIME) {
+            self.slide = None;
         }
         // counted from the last key too, since no frames are drawn while everything is still
         let step = self.ticked_at.max(self.touched_at).elapsed().as_secs_f64() / LIFT_TIME.as_secs_f64();
         self.ticked_at = Instant::now();
-        for slot in 0..self.lift.len() {
-            let target = self.lift_target(slot);
-            self.lift[slot] += (target - self.lift[slot]).clamp(-step, step);
+        for v in 0..self.lift.len() {
+            let target = self.lift_target(v);
+            self.lift[v] += (target - self.lift[v]).clamp(-step, step);
         }
     }
 
-    fn lift_target(&self, slot: usize) -> f64 {
-        let marked = slot == self.cursor || self.picked == Some(slot);
-        if marked && !self.solved() { 1.0 } else { 0.0 }
+    /// Only the dot under the cursor, which is the carried one while carrying.
+    fn lift_target(&self, v: usize) -> f64 {
+        if self.slot_of[v] == self.cursor && !self.solved() { 1.0 } else { 0.0 }
     }
 
     fn lifting(&self) -> bool {
-        (0..self.lift.len()).any(|slot| self.lift[slot] != self.lift_target(slot))
+        (0..self.lift.len()).any(|v| self.lift[v] != self.lift_target(v))
     }
 
     fn unfold(&self) -> f64 {
-        self.solved_at.map_or(0.0, |at| progress(at, SWAP_TIME, UNFOLD_TIME))
+        self.solved_at.map_or(0.0, |at| progress(at, SLIDE_TIME, UNFOLD_TIME))
     }
 
     /// None means nothing will change until a key is pressed.
     fn wake_after(&self) -> Option<Duration> {
-        let next = if self.swap.is_some() || self.lifting() || (self.solved() && self.unfold() < 1.0) {
+        let next = if self.slide.is_some() || self.lifting() || (self.solved() && self.unfold() < 1.0) {
             Some(FRAME_TIME)
         } else if !self.solved() {
             Some(self.until_blink())
         } else {
             None
         };
-        next.into_iter().chain(self.until_copied_fades()).min()
+        next.into_iter().chain(self.until_copied_fades()).chain(self.until_restart_lapses()).min()
     }
 
     fn edge_pos(&self, e: &Edge) -> (Point, Point) {
@@ -427,19 +472,14 @@ impl Game {
     }
 
     fn circle_pos(&self, v: usize) -> Point {
-        let to = self.lifted_slot_pos(self.slot_of[v]);
-        let Some(swap) = &self.swap else { return to };
-        let partner = match v {
-            _ if v == swap.a => swap.b,
-            _ if v == swap.b => swap.a,
-            _ => return to,
-        };
-        let from = self.lifted_slot_pos(self.slot_of[partner]);
-        from.lerp(to, ease(progress(swap.started, Duration::ZERO, SWAP_TIME)))
+        let to = self.rest_pos(v);
+        let Some(slide) = &self.slide else { return to };
+        polar_lerp(slide.from[v], to, ease(progress(slide.started, Duration::ZERO, SLIDE_TIME)))
     }
 
-    fn lifted_slot_pos(&self, slot: usize) -> Point {
-        slot_pos(slot, self.slot_of.len()) * (1.0 + LIFT * ease(self.lift[slot]))
+    /// In its slot, lifted out as far as it is.
+    fn rest_pos(&self, v: usize) -> Point {
+        slot_pos(self.slot_of[v], self.slot_of.len()) * (1.0 + LIFT * ease(self.lift[v]))
     }
 
     /// The shape turned, and mirrored if the player's outline runs the other way, to best match
@@ -480,6 +520,13 @@ impl Game {
     }
 }
 
+/// The dots on either side of v, counterclockwise first.
+fn neighbors(slot_of: &[usize], v: usize) -> (usize, usize) {
+    let n = slot_of.len();
+    let at = |slot: usize| slot_of.iter().position(|&s| s == slot % n).unwrap();
+    (at(slot_of[v] + 1), at(slot_of[v] + n - 1))
+}
+
 fn edges_of(flaps: &[[usize; 3]]) -> Vec<Edge> {
     let mut edges: Vec<Edge> = Vec::new();
     for &[a, b, c] in flaps {
@@ -498,6 +545,11 @@ fn edges_of(flaps: &[[usize; 3]]) -> Vec<Edge> {
         }
     }
     edges
+}
+
+/// None once a timed notice started at `at` has run its length.
+fn time_left(at: Option<Instant>, length: Duration) -> Option<Duration> {
+    length.checked_sub(at?.elapsed()).filter(|d| !d.is_zero())
 }
 
 fn progress(start: Instant, delay: Duration, length: Duration) -> f64 {
@@ -647,6 +699,14 @@ impl Mul<f64> for Point {
     fn mul(self, k: f64) -> Point {
         Point::new(self.x * k, self.y * k)
     }
+}
+
+/// Around the center rather than straight across, so dots glide along the circle.
+fn polar_lerp(a: Point, b: Point, t: f64) -> Point {
+    let (ra, rb) = (a.dist(Point::ZERO), b.dist(Point::ZERO));
+    let (ta, tb) = (a.y.atan2(a.x), b.y.atan2(b.x));
+    let turn = (tb - ta + PI).rem_euclid(TAU) - PI;
+    Point::new(1.0, 0.0).rotate(ta + turn * t) * (ra + (rb - ra) * t)
 }
 
 fn ease(t: f64) -> f64 {
@@ -840,17 +900,19 @@ struct View {
     help: bool,
 }
 
-const HELP: [(&str, &str); 6] = [
+const HELP: [(&str, &str); 8] = [
     ("←/→  h/l", "move around the circle"),
-    ("space/enter", "pick a dot, then another to swap"),
-    ("r", "restart, or replay once solved"),
+    ("space/enter", "pick up a dot, carry it, set it down"),
+    ("esc", "put a carried dot back where it was"),
+    ("[ / ]", "previous or next level, each kept as you left it"),
+    ("r r", "restart, or replay once solved"),
     ("c", "copy the puzzle code"),
     ("?", "show or hide this help"),
     ("q/esc", "quit"),
 ];
 
 fn render_help(frame: &mut Frame, area: Rect, palette: Palette) {
-    let goal = "Swap dots until no creases cross.";
+    let goal = "Move dots until no creases cross.";
     let lines: Vec<Line> = [Line::from(goal), Line::default()]
         .into_iter()
         .chain(HELP.iter().map(|(keys, what)| Line::from(vec![format!("{keys:<13}").fg(palette.pick(Color::Cyan)).bold(), (*what).into()])))
@@ -893,16 +955,11 @@ fn render(frame: &mut Frame, game: &Game, view: &View) {
             let mut mark = |slot: usize, glyph: &'static str, color: Color| {
                 print(game.vertex_pos(game.vertex_at(slot)), glyph.fg(palette.pick(color)).bold());
             };
-            if let Some(slot) = game.picked {
-                mark(slot, palette.picked_glyph(), Color::Yellow);
+            match (game.carrying(), game.cursor_filled()) {
+                (true, _) => mark(game.cursor, palette.picked_glyph(), Color::Yellow),
+                (false, true) => mark(game.cursor, "●", Color::Cyan),
+                (false, false) => mark(game.cursor, "○", Color::Cyan),
             }
-            let on_picked = game.picked == Some(game.cursor);
-            let glyph = match (game.cursor_filled(), on_picked) {
-                (false, _) => "○",
-                (true, false) => "●",
-                (true, true) => palette.picked_glyph(),
-            };
-            mark(game.cursor, glyph, if on_picked { Color::Yellow } else { Color::Cyan });
         });
     frame.render_widget(canvas, area);
 
@@ -921,13 +978,16 @@ fn render(frame: &mut Frame, game: &Game, view: &View) {
     }
     frame.render_widget(Line::from(info), Rect { y: info_row, height: 1, ..area });
 
-    let text: Span = if game.solved() {
+    let text: Span = if game.until_restart_lapses().is_some() {
+        " press r again to restart, any other key to keep playing".fg(palette.pick(Color::Yellow)).bold()
+    } else if game.solved() {
         let new_best = if game.new_best() { " new best!" } else { "" };
         format!(" solved in {} moves!{new_best} enter: next level · r replay · ? help", game.moves)
             .fg(palette.pick(Color::Green))
             .bold()
     } else {
-        format!(" crossings: {}   moves: {}   ←/→ move · space swap · ? help", game.crossings(), game.moves).into()
+        let keys = if game.carrying() { "←/→ carry · space set down · esc put back" } else { "←/→ move · space pick up · ? help" };
+        format!(" crossings: {}   moves: {}   {keys}", game.crossings(), game.moves).into()
     };
     frame.render_widget(text, status);
 
@@ -1176,12 +1236,23 @@ fn parse_args(args: impl Iterator<Item = String>) -> Option<(Seed, Option<usize>
     Some((seed, level, day))
 }
 
+/// Shelves the current level and brings back the one `step` away, or starts it fresh if it's
+/// never been played.
+fn jump(shelf: &mut BTreeMap<usize, Game>, game: &mut Game, step: isize, scores: &Scores) {
+    let level = game.level().strict_add_signed(step);
+    let mut next = shelf.remove(&level).unwrap_or_else(|| Game::new(game.seed, level, scores));
+    next.touched_at = Instant::now();
+    shelf.insert(game.level(), std::mem::replace(game, next));
+}
+
 fn app(terminal: &mut DefaultTerminal, seed: Seed, level: Option<usize>, day: Option<u64>, palette: Palette) -> std::io::Result<()> {
     let mut scores = Scores::load();
     let level = level.unwrap_or_else(|| scores.first_unsolved(seed));
     let mut game = Game::new(seed, level, &scores);
     let date = day.map(format_day);
     let mut view = View { title: Title { started: Instant::now() }, palette, date, help: false };
+    // levels left with [ and ], to come back to as they were
+    let mut shelf = BTreeMap::new();
     loop {
         game.tick();
         terminal.draw(|frame| render(frame, &game, &view))?;
@@ -1199,14 +1270,21 @@ fn app(terminal: &mut DefaultTerminal, seed: Seed, level: Option<usize>, day: Op
                 view.help = false;
                 continue;
             }
+            // any key but a second r drops a restart that's waiting
+            let restart_asked = game.until_restart_lapses().is_some();
+            game.restart_asked_at = None;
             match key.code {
+                KeyCode::Esc if game.carrying() => game.put_back(),
                 KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
                 KeyCode::Char('?') => view.help = true,
                 KeyCode::Char('c') => game.copy_code(),
                 KeyCode::Left | KeyCode::Char('h') => game.step_cursor(1),
                 KeyCode::Right | KeyCode::Char('l') => game.step_cursor(-1),
+                KeyCode::Char('r') if game.in_progress() && !restart_asked => game.restart_asked_at = Some(Instant::now()),
                 KeyCode::Char('r') => game = Game::new(seed, game.level(), &scores),
-                KeyCode::Enter | KeyCode::Char(' ') if game.solved() => game = Game::new(seed, game.level() + 1, &scores),
+                KeyCode::Char('[') if game.level() > 1 => jump(&mut shelf, &mut game, -1, &scores),
+                KeyCode::Char(']') => jump(&mut shelf, &mut game, 1, &scores),
+                KeyCode::Enter | KeyCode::Char(' ') if game.solved() => jump(&mut shelf, &mut game, 1, &scores),
                 KeyCode::Char(' ') | KeyCode::Enter => {
                     game.select();
                     if game.solved() {
