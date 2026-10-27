@@ -33,7 +33,7 @@ const LIFT: f64 = 0.06;
 /// Chance that a new flap grows off the newest one: higher makes snakes, lower makes blobs.
 const STRIP_BIAS: f64 = 0.6;
 
-const CROSSED_COLOR: Color = Color::Indexed(174);
+const CROSSED_COLOR: Color = Color::LightRed;
 /// In braille dots, which are about square on screen.
 const CROSSED_RADIUS: usize = 4;
 
@@ -786,7 +786,7 @@ impl Flaps {
                     Crease { p, q, top_flap: e.top_flap, shared: e.shared }
                 })
                 .collect(),
-            color: palette.pick(if game.solved() { Color::Green } else { Color::Gray }),
+            color: palette.pick(if game.solved() { Color::Green } else { Color::Reset }),
             dissolve: game.unfold(),
             is_shadow: false,
             crossings,
@@ -999,8 +999,8 @@ fn render(frame: &mut Frame, game: &Game, view: &View) {
 // ---------------------------------------------------------------------------------------------
 // Title
 
-/// Darker than DarkGray: at this size a lighter shadow competes with the letters.
-const TITLE_SHADOW: Color = Color::Indexed(237);
+/// Theme colors only, so the shadow tracks light and dark backgrounds alike.
+const TITLE_SHADOW: Color = Color::DarkGray;
 
 /// Lowercase "unfold" in a 3×5 pixel font.
 const TITLE_LETTERS: [[&str; 5]; 6] = [
@@ -1096,7 +1096,7 @@ impl Title {
                     .flat_map(|(k, t)| (0..3).map(move |i| Crease { p: t[i], q: t[(i + 1) % 3], top_flap: k, shared: true }))
                     .collect(),
                 tris: now.clone(),
-                color: palette.pick(Color::Gray),
+                color: Color::Reset,
                 dissolve,
                 is_shadow: false,
                 crossings: Vec::new(),
