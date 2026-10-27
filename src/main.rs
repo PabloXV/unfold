@@ -4,8 +4,9 @@ use rand::{Rng, RngExt, SeedableRng};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Stylize};
-use ratatui::text::Span;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::canvas::{Canvas, Painter, Shape};
+use ratatui::widgets::{Block, Clear, Padding, Paragraph};
 use ratatui::{DefaultTerminal, Frame};
 use std::collections::BTreeMap;
 use std::f64::consts::{PI, TAU};
@@ -21,6 +22,11 @@ const UNFOLD_TIME: Duration = Duration::from_millis(1200);
 const BLINK_DELAY: Duration = Duration::from_millis(800);
 const BLINK_TIME: Duration = Duration::from_millis(900);
 const FRAME_TIME: Duration = Duration::from_millis(16);
+const LIFT_TIME: Duration = Duration::from_millis(120);
+const COPIED_TIME: Duration = Duration::from_millis(1500);
+
+/// How far the hovered and picked dots stand out from the circle, as a fraction of its radius.
+const LIFT: f64 = 0.06;
 
 /// Chance that a new flap grows off the newest one: higher makes snakes, lower makes blobs.
 const STRIP_BIAS: f64 = 0.6;
@@ -30,12 +36,16 @@ const CROSSED_COLOR: Color = Color::Indexed(174);
 const CROSSED_RADIUS: usize = 4;
 
 const USAGE: &str = "\
-usage: unfld [level | seed/level] [--daily | --rand]
+usage: unfld [level | seed/level] [--daily [date | ±days] | --rand]
 
-  unfld 9          level 9 with a random seed
-  unfld ABC123/9   level 9 of seed ABC123, to replay a puzzle or share it
-  unfld --daily    today's seed, the same for everyone (changes at midnight UTC)
-  unfld --rand     a random seed, which is also the default";
+  unfld                      today's seed, the same for everyone (changes at midnight UTC)
+  unfld 9                    level 9 of today's seed
+  unfld ABC123/9             level 9 of seed ABC123, to replay a puzzle or share it
+  unfld --daily 2026-10-21   that day's seed
+  unfld --daily -1           yesterday's seed, or +1 for tomorrow's
+  unfld --rand               a random seed
+
+Without a level, play picks up at the first level of the seed not yet solved.";
 
 // ---------------------------------------------------------------------------------------------
 // Seeds, scores, palette
@@ -51,9 +61,8 @@ impl Seed {
     }
 
     /// Every step of the mix can be undone, so no two days share a seed for 45,000 years.
-    fn daily() -> Self {
-        let secs = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
-        let mut x = ((secs / 86_400) as u32).wrapping_add(0x5EED) & Self::MASK;
+    fn daily(day: u64) -> Self {
+        let mut x = (day as u32).wrapping_add(0x5EED) & Self::MASK;
         x = x.wrapping_mul(0x9E3779) & Self::MASK;
         x ^= x >> 12;
         x = x.wrapping_mul(0x85EBCB) & Self::MASK;
@@ -75,6 +84,58 @@ impl fmt::Display for Seed {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:06X}", self.0)
     }
+}
+
+/// Days since the Unix epoch, in UTC.
+fn today() -> u64 {
+    SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() / 86_400
+}
+
+/// Year, month and day of a day since the epoch, by Howard Hinnant's civil_from_days.
+fn civil_from_days(day: u64) -> (u64, u64, u64) {
+    let z = day + 719_468;
+    let (era, doe) = (z / 146_097, z % 146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (era * 400 + yoe + (m <= 2) as u64, m, d)
+}
+
+/// The inverse, days_from_civil. Out of range months and days run over into the next ones.
+fn days_from_civil(y: u64, m: u64, d: u64) -> u64 {
+    let y = y - (m <= 2) as u64;
+    let (era, yoe) = (y / 400, y % 400);
+    let doy = (153 * if m > 2 { m - 3 } else { m + 9 } + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    (era * 146_097 + doe).saturating_sub(719_468)
+}
+
+/// Like "2026 Oct 27".
+fn format_day(day: u64) -> String {
+    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let (y, m, d) = civil_from_days(day);
+    format!("{y} {} {d}", MONTHS[m as usize - 1])
+}
+
+/// A date like 2026-10-21, or days from today like -1 or +1.
+fn parse_day(s: &str, today: u64) -> Option<u64> {
+    let number = |n: &str| n.bytes().all(|b| b.is_ascii_digit()).then(|| n.parse::<u64>().ok()).flatten();
+    if let Some(n) = s.strip_prefix('+') {
+        return today.checked_add(number(n)?);
+    }
+    if let Some(n) = s.strip_prefix('-') {
+        return today.checked_sub(number(n)?);
+    }
+    let parts: Vec<u64> = s.split('-').map(number).collect::<Option<_>>()?;
+    let &[y, m, d] = &parts[..] else { return None };
+    if !(1970..=9999).contains(&y) || !(1..=12).contains(&m) || d == 0 {
+        return None;
+    }
+    // a day past the end of its month comes back as a different date
+    let day = days_from_civil(y, m, d);
+    (civil_from_days(day) == (y, m, d)).then_some(day)
 }
 
 fn parse_level(s: &str) -> Option<usize> {
@@ -112,6 +173,10 @@ impl Scores {
 
     fn get(&self, seed: Seed, level: usize) -> Option<usize> {
         self.best.get(&(seed, level)).copied()
+    }
+
+    fn first_unsolved(&self, seed: Seed) -> usize {
+        (1..).find(|&level| self.get(seed, level).is_none()).unwrap()
     }
 
     /// Write errors are ignored: losing a score isn't worth interrupting the game.
@@ -179,6 +244,10 @@ struct Game {
     swap: Option<Swap>,
     solved_at: Option<Instant>,
     touched_at: Instant,
+    /// Per slot, from 0 on the circle to 1 fully lifted out.
+    lift: Vec<f64>,
+    ticked_at: Instant,
+    copied_at: Option<Instant>,
 }
 
 impl Game {
@@ -201,6 +270,9 @@ impl Game {
             swap: None,
             solved_at: None,
             touched_at: Instant::now(),
+            lift: vec![0.0; n],
+            ticked_at: Instant::now(),
+            copied_at: None,
         };
         // always shuffle at least once: vertices are numbered in growth order, which gives the puzzle away
         loop {
@@ -213,6 +285,19 @@ impl Game {
 
     fn level(&self) -> usize {
         self.slot_of.len() + 1 - LEVEL_1_DOTS
+    }
+
+    fn code(&self) -> String {
+        format!("{}/{}", self.seed, self.level())
+    }
+
+    fn copy_code(&mut self) {
+        copy_to_clipboard(&self.code());
+        self.copied_at = Some(Instant::now());
+    }
+
+    fn until_copied_fades(&self) -> Option<Duration> {
+        COPIED_TIME.checked_sub(self.copied_at?.elapsed()).filter(|d| !d.is_zero())
     }
 
     fn solved(&self) -> bool {
@@ -291,6 +376,22 @@ impl Game {
         if self.swap.as_ref().is_some_and(|s| s.started.elapsed() >= SWAP_TIME) {
             self.swap = None;
         }
+        // counted from the last key too, since no frames are drawn while everything is still
+        let step = self.ticked_at.max(self.touched_at).elapsed().as_secs_f64() / LIFT_TIME.as_secs_f64();
+        self.ticked_at = Instant::now();
+        for slot in 0..self.lift.len() {
+            let target = self.lift_target(slot);
+            self.lift[slot] += (target - self.lift[slot]).clamp(-step, step);
+        }
+    }
+
+    fn lift_target(&self, slot: usize) -> f64 {
+        let marked = slot == self.cursor || self.picked == Some(slot);
+        if marked && !self.solved() { 1.0 } else { 0.0 }
+    }
+
+    fn lifting(&self) -> bool {
+        (0..self.lift.len()).any(|slot| self.lift[slot] != self.lift_target(slot))
     }
 
     fn unfold(&self) -> f64 {
@@ -299,13 +400,14 @@ impl Game {
 
     /// None means nothing will change until a key is pressed.
     fn wake_after(&self) -> Option<Duration> {
-        if self.swap.is_some() || (self.solved() && self.unfold() < 1.0) {
+        let next = if self.swap.is_some() || self.lifting() || (self.solved() && self.unfold() < 1.0) {
             Some(FRAME_TIME)
         } else if !self.solved() {
             Some(self.until_blink())
         } else {
             None
-        }
+        };
+        next.into_iter().chain(self.until_copied_fades()).min()
     }
 
     fn edge_pos(&self, e: &Edge) -> (Point, Point) {
@@ -325,16 +427,19 @@ impl Game {
     }
 
     fn circle_pos(&self, v: usize) -> Point {
-        let n = self.slot_of.len();
-        let to = slot_pos(self.slot_of[v], n);
+        let to = self.lifted_slot_pos(self.slot_of[v]);
         let Some(swap) = &self.swap else { return to };
         let partner = match v {
             _ if v == swap.a => swap.b,
             _ if v == swap.b => swap.a,
             _ => return to,
         };
-        let from = slot_pos(self.slot_of[partner], n);
+        let from = self.lifted_slot_pos(self.slot_of[partner]);
         from.lerp(to, ease(progress(swap.started, Duration::ZERO, SWAP_TIME)))
+    }
+
+    fn lifted_slot_pos(&self, slot: usize) -> Point {
+        slot_pos(slot, self.slot_of.len()) * (1.0 + LIFT * ease(self.lift[slot]))
     }
 
     /// The shape turned, and mirrored if the player's outline runs the other way, to best match
@@ -709,7 +814,7 @@ impl Board {
         }
         let inner = Point::new(-self.half_w + width as f64 * cell.x, self.half_h - height as f64 * cell.y);
         let nearest = Point::new(inner.x.min(0.0), inner.y.max(0.0));
-        nearest.dist(Point::ZERO) > 1.0 + cell.y
+        nearest.dist(Point::ZERO) > 1.0 + LIFT + cell.y
     }
 
     /// Canvas text and braille dots round to cells differently, so text printed at a point can
@@ -726,7 +831,39 @@ impl Board {
     }
 }
 
-fn render(frame: &mut Frame, game: &Game, title: &Title, palette: Palette) {
+/// What's on screen besides the game itself.
+struct View {
+    title: Title,
+    palette: Palette,
+    /// Set when playing the daily puzzle.
+    date: Option<String>,
+    help: bool,
+}
+
+const HELP: [(&str, &str); 6] = [
+    ("←/→  h/l", "move around the circle"),
+    ("space/enter", "pick a dot, then another to swap"),
+    ("r", "restart, or replay once solved"),
+    ("c", "copy the puzzle code"),
+    ("?", "show or hide this help"),
+    ("q/esc", "quit"),
+];
+
+fn render_help(frame: &mut Frame, area: Rect, palette: Palette) {
+    let goal = "Swap dots until no creases cross.";
+    let lines: Vec<Line> = [Line::from(goal), Line::default()]
+        .into_iter()
+        .chain(HELP.iter().map(|(keys, what)| Line::from(vec![format!("{keys:<13}").fg(palette.pick(Color::Cyan)).bold(), (*what).into()])))
+        .collect();
+    let width = lines.iter().map(Line::width).max().unwrap_or(0) as u16 + 4;
+    let box_area = area.centered(Constraint::Length(width), Constraint::Length(lines.len() as u16 + 2));
+    let block = Block::bordered().title(" help ").padding(Padding::horizontal(1));
+    frame.render_widget(Clear, box_area);
+    frame.render_widget(Paragraph::new(lines).block(block), box_area);
+}
+
+fn render(frame: &mut Frame, game: &Game, view: &View) {
+    let (title, palette) = (&view.title, view.palette);
     let [area, status] = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
     let board = Board::new(area);
     let crossings = game.visible_crossings();
@@ -776,19 +913,27 @@ fn render(frame: &mut Frame, game: &Game, title: &Title, palette: Palette) {
         title.render(frame, Rect { width: Title::WIDTH, height: Title::HEIGHT, ..area }, palette);
         info_row += Title::HEIGHT;
     }
+    let date = view.date.as_ref().map_or(String::new(), |date| format!(" · {date}"));
     let best = game.best().map_or(String::new(), |best| format!(" · best {best}"));
-    let info = Span::from(format!(" {}/{}{best}", game.seed, game.level())).fg(palette.pick(Color::DarkGray));
-    frame.render_widget(info, Rect { y: info_row, height: 1, ..area });
+    let mut info = vec![Span::from(format!(" {}{date}{best}", game.code())).fg(palette.pick(Color::DarkGray))];
+    if game.until_copied_fades().is_some() {
+        info.push(" · copied".fg(palette.pick(Color::Cyan)));
+    }
+    frame.render_widget(Line::from(info), Rect { y: info_row, height: 1, ..area });
 
     let text: Span = if game.solved() {
         let new_best = if game.new_best() { " new best!" } else { "" };
-        format!(" solved in {} moves!{new_best} enter: next level · r replay · q quit", game.moves)
+        format!(" solved in {} moves!{new_best} enter: next level · r replay · ? help", game.moves)
             .fg(palette.pick(Color::Green))
             .bold()
     } else {
-        format!(" crossings: {}   moves: {}   ←/→ move · space swap · r restart · q quit", game.crossings(), game.moves).into()
+        format!(" crossings: {}   moves: {}   ←/→ move · space swap · ? help", game.crossings(), game.moves).into()
     };
     frame.render_widget(text, status);
+
+    if view.help {
+        render_help(frame, area, palette);
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -955,27 +1100,67 @@ fn touches(&[a, b, c]: &[Point; 3], p: Point) -> bool {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Clipboard
+
+/// Sends an OSC 52 escape, which most terminals take as a clipboard write and which also works
+/// over ssh, then tries the system's clipboard tool for terminals that ignore it (like macOS
+/// Terminal). Both fail silently: there's no way to tell whether the escape worked anyway.
+fn copy_to_clipboard(text: &str) {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut out = std::io::stdout();
+    let _ = write!(out, "\x1b]52;c;{}\x07", base64(text.as_bytes())).and_then(|()| out.flush());
+    let tools: &[(&str, &[&str])] = &[("pbcopy", &[]), ("wl-copy", &[]), ("xclip", &["-selection", "clipboard"])];
+    for (tool, args) in tools {
+        let child = Command::new(tool).args(*args).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
+        if let Ok(mut child) = child {
+            let _ = child.stdin.take().unwrap().write_all(text.as_bytes());
+            let _ = child.wait();
+            return;
+        }
+    }
+}
+
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let n = chunk.iter().enumerate().fold(0u32, |n, (i, &b)| n | (b as u32) << (16 - 8 * i));
+        for i in 0..4 {
+            let c = if i <= chunk.len() { ALPHABET[(n >> (18 - 6 * i) & 63) as usize] } else { b'=' };
+            out.push(c as char);
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------------------------
 // Main loop
 
 fn main() -> std::io::Result<()> {
-    let Some((seed, level)) = parse_args(std::env::args().skip(1)) else {
+    let Some((seed, level, day)) = parse_args(std::env::args().skip(1)) else {
         eprintln!("{USAGE}");
         std::process::exit(2);
     };
-    ratatui::run(|terminal| app(terminal, seed, level, Palette::from_env()))
+    ratatui::run(|terminal| app(terminal, seed, level, day, Palette::from_env()))
 }
 
-fn parse_args(args: impl Iterator<Item = String>) -> Option<(Seed, usize)> {
-    let (mut seed, mut level) = (None, 1);
-    for arg in args {
+/// The seed, the level if one was given, and the day when the seed is a daily one.
+fn parse_args(args: impl Iterator<Item = String>) -> Option<(Seed, Option<usize>, Option<u64>)> {
+    let (mut seed, mut level) = (None, None);
+    let mut args = args.peekable();
+    while let Some(arg) = args.next() {
         let (s, l) = match arg.as_str() {
             "-h" | "--help" => {
                 println!("{USAGE}");
                 std::process::exit(0);
             }
-            "--daily" => (Some(Seed::daily()), None),
-            "--rand" => (Some(Seed::random()), None),
-            code if code.contains('/') => parse_code(code).map(|(s, l)| (Some(s), Some(l)))?,
+            "--daily" => {
+                let day = args.next_if_map(|a| parse_day(&a, today()).ok_or(a)).unwrap_or_else(today);
+                (Some((Seed::daily(day), Some(day))), None)
+            }
+            "--rand" => (Some((Seed::random(), None)), None),
+            code if code.contains('/') => parse_code(code).map(|(s, l)| (Some((s, None)), Some(l)))?,
             n => (None, Some(parse_level(n)?)),
         };
         if let Some(s) = s
@@ -983,19 +1168,24 @@ fn parse_args(args: impl Iterator<Item = String>) -> Option<(Seed, usize)> {
         {
             return None;
         }
-        level = l.unwrap_or(level);
+        level = l.or(level);
     }
-    Some((seed.unwrap_or_else(Seed::random), level))
+    let (seed, day) = seed.unwrap_or_else(|| (Seed::daily(today()), Some(today())));
+    // a pasted code from today's daily gets its date too
+    let day = day.or_else(|| (seed == Seed::daily(today())).then(today));
+    Some((seed, level, day))
 }
 
-fn app(terminal: &mut DefaultTerminal, seed: Seed, level: usize, palette: Palette) -> std::io::Result<()> {
+fn app(terminal: &mut DefaultTerminal, seed: Seed, level: Option<usize>, day: Option<u64>, palette: Palette) -> std::io::Result<()> {
     let mut scores = Scores::load();
+    let level = level.unwrap_or_else(|| scores.first_unsolved(seed));
     let mut game = Game::new(seed, level, &scores);
-    let title = Title { started: Instant::now() };
+    let date = day.map(format_day);
+    let mut view = View { title: Title { started: Instant::now() }, palette, date, help: false };
     loop {
         game.tick();
-        terminal.draw(|frame| render(frame, &game, &title, palette))?;
-        let wait = if title.animating() { Some(FRAME_TIME) } else { game.wake_after() };
+        terminal.draw(|frame| render(frame, &game, &view))?;
+        let wait = if view.title.animating() { Some(FRAME_TIME) } else { game.wake_after() };
         if let Some(wait) = wait
             && !event::poll(wait)?
         {
@@ -1004,8 +1194,15 @@ fn app(terminal: &mut DefaultTerminal, seed: Seed, level: usize, palette: Palett
         if let Event::Key(key) = event::read()?
             && key.kind == KeyEventKind::Press
         {
+            // any key closes the help, and does only that, except quitting
+            if view.help && !matches!(key.code, KeyCode::Char('q')) {
+                view.help = false;
+                continue;
+            }
             match key.code {
                 KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                KeyCode::Char('?') => view.help = true,
+                KeyCode::Char('c') => game.copy_code(),
                 KeyCode::Left | KeyCode::Char('h') => game.step_cursor(1),
                 KeyCode::Right | KeyCode::Char('l') => game.step_cursor(-1),
                 KeyCode::Char('r') => game = Game::new(seed, game.level(), &scores),
