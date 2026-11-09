@@ -1,0 +1,9 @@
+[package]
+name = "unfold-core"
+description = "The puzzle without any drawing, input or clock, shared by the terminal and web versions"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+# no system randomness, which wasm doesn't have: every puzzle comes from its seed
+rand = { workspace = true, features = ["alloc"] }

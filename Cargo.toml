@@ -1,12 +1,13 @@
-[package]
-name = "unfold"
+[workspace]
+resolver = "3"
+members = ["core", "tui"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 
-[[bin]]
-name = "unfld"
-path = "src/main.rs"
-
-[dependencies]
-rand = "0.10.3"
-ratatui = "0.30.2"
+[workspace.dependencies]
+# Pinned exactly: a seed's puzzles depend on how rand samples and shuffles, so any upgrade has to
+# pass core's fingerprint tests first.
+rand = { version = "=0.10.3", default-features = false }
+unfold-core = { path = "core" }

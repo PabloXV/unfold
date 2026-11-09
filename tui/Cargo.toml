@@ -1,0 +1,14 @@
+[package]
+name = "unfold-tui"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "unfld"
+path = "src/main.rs"
+
+[dependencies]
+# thread_rng only for --rand
+rand = { workspace = true, features = ["thread_rng"] }
+ratatui = "0.30.2"
+unfold-core.workspace = true

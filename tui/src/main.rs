@@ -1,6 +1,4 @@
-use rand::rngs::Xoshiro256PlusPlus;
-use rand::seq::SliceRandom;
-use rand::{Rng, RngExt, SeedableRng};
+use rand::RngExt;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Stylize};
@@ -10,12 +8,9 @@ use ratatui::widgets::{Block, Clear, Padding, Paragraph};
 use ratatui::{DefaultTerminal, Frame};
 use std::collections::BTreeMap;
 use std::f64::consts::{PI, TAU};
-use std::fmt;
-use std::ops::{Add, Mul, Sub};
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
-
-const LEVEL_1_DOTS: usize = 4;
+use unfold_core::{Edge, Point, Puzzle, Seed, format_day, inside, intersection, neighbors, parse_code, parse_day, parse_level, slot_pos, touches};
 
 const SLIDE_TIME: Duration = Duration::from_millis(150);
 const UNFOLD_TIME: Duration = Duration::from_millis(1200);
@@ -29,9 +24,6 @@ const RESTART_TIME: Duration = Duration::from_millis(2000);
 
 /// How far the hovered and carried dots stand out from the circle, as a fraction of its radius.
 const LIFT: f64 = 0.06;
-
-/// Chance that a new flap grows off the newest one: higher makes snakes, lower makes blobs.
-const STRIP_BIAS: f64 = 0.6;
 
 const CROSSED_COLOR: Color = Color::LightRed;
 /// In braille dots, which are about square on screen.
@@ -52,102 +44,13 @@ Without a level, play picks up at the first level of the seed not yet solved.";
 // ---------------------------------------------------------------------------------------------
 // Seeds, scores, palette
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct Seed(u32);
-
-impl Seed {
-    const MASK: u32 = (1 << 24) - 1;
-
-    fn random() -> Self {
-        Seed(rand::rng().random_range(0..=Self::MASK))
-    }
-
-    /// Every step of the mix can be undone, so no two days share a seed for 45,000 years.
-    fn daily(day: u64) -> Self {
-        let mut x = (day as u32).wrapping_add(0x5EED) & Self::MASK;
-        x = x.wrapping_mul(0x9E3779) & Self::MASK;
-        x ^= x >> 12;
-        x = x.wrapping_mul(0x85EBCB) & Self::MASK;
-        x ^= x >> 13;
-        Seed(x)
-    }
-
-    fn parse(s: &str) -> Option<Self> {
-        let hex = s.len() == 6 && s.chars().all(|c| c.is_ascii_hexdigit());
-        hex.then(|| Seed(u32::from_str_radix(s, 16).unwrap()))
-    }
-
-    fn rng(self, level: usize) -> Xoshiro256PlusPlus {
-        Xoshiro256PlusPlus::seed_from_u64((self.0 as u64) << 32 | level as u64)
-    }
-}
-
-impl fmt::Display for Seed {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:06X}", self.0)
-    }
+fn random_seed() -> Seed {
+    Seed(rand::rng().random_range(0..=Seed::MASK))
 }
 
 /// Days since the Unix epoch, in UTC.
 fn today() -> u64 {
     SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() / 86_400
-}
-
-/// Year, month and day of a day since the epoch, by Howard Hinnant's civil_from_days.
-fn civil_from_days(day: u64) -> (u64, u64, u64) {
-    let z = day + 719_468;
-    let (era, doe) = (z / 146_097, z % 146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    (era * 400 + yoe + (m <= 2) as u64, m, d)
-}
-
-/// The inverse, days_from_civil. Out of range months and days run over into the next ones.
-fn days_from_civil(y: u64, m: u64, d: u64) -> u64 {
-    let y = y - (m <= 2) as u64;
-    let (era, yoe) = (y / 400, y % 400);
-    let doy = (153 * if m > 2 { m - 3 } else { m + 9 } + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    (era * 146_097 + doe).saturating_sub(719_468)
-}
-
-/// Like "2026 Oct 27".
-fn format_day(day: u64) -> String {
-    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    let (y, m, d) = civil_from_days(day);
-    format!("{y} {} {d}", MONTHS[m as usize - 1])
-}
-
-/// A date like 2026-10-21, or days from today like -1 or +1.
-fn parse_day(s: &str, today: u64) -> Option<u64> {
-    let number = |n: &str| n.bytes().all(|b| b.is_ascii_digit()).then(|| n.parse::<u64>().ok()).flatten();
-    if let Some(n) = s.strip_prefix('+') {
-        return today.checked_add(number(n)?);
-    }
-    if let Some(n) = s.strip_prefix('-') {
-        return today.checked_sub(number(n)?);
-    }
-    let parts: Vec<u64> = s.split('-').map(number).collect::<Option<_>>()?;
-    let &[y, m, d] = &parts[..] else { return None };
-    if !(1970..=9999).contains(&y) || !(1..=12).contains(&m) || d == 0 {
-        return None;
-    }
-    // a day past the end of its month comes back as a different date
-    let day = days_from_civil(y, m, d);
-    (civil_from_days(day) == (y, m, d)).then_some(day)
-}
-
-fn parse_level(s: &str) -> Option<usize> {
-    s.parse().ok().filter(|&level| level >= 1)
-}
-
-/// A puzzle code like ABC123/9.
-fn parse_code(s: &str) -> Option<(Seed, usize)> {
-    let (seed, level) = s.split_once('/')?;
-    Some((Seed::parse(seed)?, parse_level(level)?))
 }
 
 /// Fewest moves per puzzle, as `SEED/LEVEL MOVES` lines.
@@ -231,22 +134,10 @@ struct Carry {
     before: Vec<usize>,
 }
 
-struct Edge {
-    a: usize,
-    b: usize,
-    top_flap: usize,
-    /// Shared by two flaps, as opposed to part of the outline.
-    shared: bool,
-}
-
 struct Game {
-    seed: Seed,
+    puzzle: Puzzle,
     prior_best: Option<usize>,
     slot_of: Vec<usize>,
-    edges: Vec<Edge>,
-    /// Vertex triples, stacked bottom to top like sheets of paper.
-    flaps: Vec<[usize; 3]>,
-    shape: Vec<Point>,
     unfolded: Vec<Point>,
     cursor: usize,
     carry: Option<Carry>,
@@ -263,17 +154,12 @@ struct Game {
 
 impl Game {
     fn new(seed: Seed, level: usize, scores: &Scores) -> Self {
-        let mut rng = seed.rng(level);
-        let n = level + LEVEL_1_DOTS - 1;
-        let (shape, mut flaps) = grow(n, &mut rng);
-        flaps.shuffle(&mut rng);
-        let mut game = Game {
-            seed,
+        let puzzle = Puzzle::new(seed, level);
+        let n = puzzle.dots();
+        Game {
             prior_best: scores.get(seed, level),
-            slot_of: (0..n).collect(),
-            edges: edges_of(&flaps),
-            flaps,
-            shape,
+            slot_of: puzzle.start.clone(),
+            puzzle,
             unfolded: Vec::new(),
             cursor: 0,
             carry: None,
@@ -285,22 +171,15 @@ impl Game {
             ticked_at: Instant::now(),
             copied_at: None,
             restart_asked_at: None,
-        };
-        // always shuffle at least once: vertices are numbered in growth order, which gives the puzzle away
-        loop {
-            game.slot_of.shuffle(&mut rng);
-            if game.crossings() > 0 {
-                return game;
-            }
         }
     }
 
     fn level(&self) -> usize {
-        self.slot_of.len() + 1 - LEVEL_1_DOTS
+        self.puzzle.level
     }
 
     fn code(&self) -> String {
-        format!("{}/{}", self.seed, self.level())
+        self.puzzle.code()
     }
 
     fn copy_code(&mut self) {
@@ -333,27 +212,15 @@ impl Game {
         self.solved().then_some(self.moves).into_iter().chain(self.prior_best).min()
     }
 
-    fn crossing_pairs(&self) -> Vec<(&Edge, &Edge)> {
-        let slots = |e: &Edge| (self.slot_of[e.a], self.slot_of[e.b]);
-        let mut pairs = Vec::new();
-        for (i, e) in self.edges.iter().enumerate() {
-            for f in &self.edges[i + 1..] {
-                if chords_cross(slots(e), slots(f)) {
-                    pairs.push((e, f));
-                }
-            }
-        }
-        pairs
-    }
-
     fn crossings(&self) -> usize {
-        self.crossing_pairs().len()
+        self.puzzle.crossings(&self.slot_of)
     }
 
     /// Only the crossings not hidden under a higher flap.
     fn visible_crossings(&self) -> Vec<Point> {
         let flaps = self.flap_pos();
-        self.crossing_pairs()
+        self.puzzle
+            .crossing_pairs(&self.slot_of)
             .into_iter()
             .filter_map(|(e, f)| {
                 let pt = intersection(self.edge_pos(e), self.edge_pos(f))?;
@@ -395,7 +262,7 @@ impl Game {
         self.moves += 1;
         if self.crossings() == 0 {
             self.solved_at = Some(Instant::now());
-            self.unfolded = self.unfold_target();
+            self.unfolded = self.puzzle.unfold_target(&self.slot_of);
         }
     }
 
@@ -460,7 +327,7 @@ impl Game {
     }
 
     fn flap_pos(&self) -> Vec<[Point; 3]> {
-        self.flaps.iter().map(|f| f.map(|v| self.vertex_pos(v))).collect()
+        self.puzzle.flaps.iter().map(|f| f.map(|v| self.vertex_pos(v))).collect()
     }
 
     fn vertex_pos(&self, v: usize) -> Point {
@@ -482,30 +349,6 @@ impl Game {
         slot_pos(self.slot_of[v], self.slot_of.len()) * (1.0 + LIFT * ease(self.lift[v]))
     }
 
-    /// The shape turned, and mirrored if the player's outline runs the other way, to best match
-    /// the solved circle, then centered and scaled to fit the board.
-    fn unfold_target(&self) -> Vec<Point> {
-        let n = self.shape.len();
-        let mean = self.shape.iter().fold(Point::ZERO, |s, &p| s + p) * (1.0 / n as f64);
-        // as complex numbers, the best rotation is the angle of sum(circle * conj(shape))
-        let fit = |flip: f64| {
-            let pts: Vec<Point> = self.shape.iter().map(|&p| p - mean).map(|p| Point::new(p.x * flip, p.y)).collect();
-            let (re, im) = pts.iter().enumerate().fold((0.0, 0.0), |(re, im), (v, &s)| {
-                let c = slot_pos(self.slot_of[v], n);
-                (re + c.dot(s), im + s.cross(c))
-            });
-            (re.hypot(im), pts, im.atan2(re))
-        };
-        let (a, b) = (fit(1.0), fit(-1.0));
-        let (_, pts, angle) = if a.0 >= b.0 { a } else { b };
-        let pts: Vec<Point> = pts.iter().map(|p| p.rotate(angle)).collect();
-        let lo = pts.iter().fold(Point::new(f64::MAX, f64::MAX), |m, p| Point::new(m.x.min(p.x), m.y.min(p.y)));
-        let hi = pts.iter().fold(Point::new(f64::MIN, f64::MIN), |m, p| Point::new(m.x.max(p.x), m.y.max(p.y)));
-        let center = lo.lerp(hi, 0.5);
-        let radius = pts.iter().map(|&p| p.dist(center)).fold(0.0, f64::max);
-        pts.iter().map(|&p| (p - center) * (1.0 / radius)).collect()
-    }
-
     fn cursor_filled(&self) -> bool {
         let Some(idle) = self.touched_at.elapsed().checked_sub(BLINK_DELAY) else { return true };
         (idle.as_millis() / BLINK_TIME.as_millis()) % 2 == 1
@@ -520,33 +363,6 @@ impl Game {
     }
 }
 
-/// The dots on either side of v, counterclockwise first.
-fn neighbors(slot_of: &[usize], v: usize) -> (usize, usize) {
-    let n = slot_of.len();
-    let at = |slot: usize| slot_of.iter().position(|&s| s == slot % n).unwrap();
-    (at(slot_of[v] + 1), at(slot_of[v] + n - 1))
-}
-
-fn edges_of(flaps: &[[usize; 3]]) -> Vec<Edge> {
-    let mut edges: Vec<Edge> = Vec::new();
-    for &[a, b, c] in flaps {
-        for (u, v) in [(a, b), (b, c), (a, c)] {
-            let (a, b) = (u.min(v), u.max(v));
-            if edges.iter().any(|e| (e.a, e.b) == (a, b)) {
-                continue;
-            }
-            let owns = |f: &[usize; 3]| f.contains(&a) && f.contains(&b);
-            edges.push(Edge {
-                a,
-                b,
-                top_flap: flaps.iter().rposition(owns).unwrap(),
-                shared: flaps.iter().filter(|f| owns(f)).count() == 2,
-            });
-        }
-    }
-    edges
-}
-
 /// None once a timed notice started at `at` has run its length.
 fn time_left(at: Option<Instant>, length: Duration) -> Option<Duration> {
     length.checked_sub(at?.elapsed()).filter(|d| !d.is_zero())
@@ -555,152 +371,6 @@ fn time_left(at: Option<Instant>, length: Duration) -> Option<Duration> {
 fn progress(start: Instant, delay: Duration, length: Duration) -> f64 {
     (start.elapsed().saturating_sub(delay).as_secs_f64() / length.as_secs_f64()).min(1.0)
 }
-
-/// Chords between circle slots cross when exactly one end of the second lies strictly
-/// between the ends of the first.
-fn chords_cross((a, b): (usize, usize), (c, d): (usize, usize)) -> bool {
-    if a == c || a == d || b == c || b == d {
-        return false;
-    }
-    let between = |v: usize| a.min(b) < v && v < a.max(b);
-    between(c) != between(d)
-}
-
-// ---------------------------------------------------------------------------------------------
-// Level generation
-
-/// Grows a flat sheet of triangles by folding each new one out from an outline edge,
-/// giving a triangulated polygon of any outline, not just a convex one.
-fn grow(n: usize, rng: &mut impl Rng) -> (Vec<Point>, Vec<[usize; 3]>) {
-    'restart: loop {
-        let mut pts = vec![Point::new(0.0, 0.0), Point::new(1.0, 0.0), Point::new(0.5, 3f64.sqrt() / 2.0)];
-        let mut tris = vec![[0, 1, 2]];
-        while pts.len() < n {
-            let (outline, fresh) = outline(&tris);
-            let placed = (0..200).find_map(|_| {
-                let pool = if rng.random::<f64>() < STRIP_BIAS { &fresh } else { &outline };
-                let (a, b, opposite) = pool[rng.random_range(0..pool.len())];
-                let (p, q) = (pts[a], pts[b]);
-                let d = q - p;
-                let mid = p.lerp(q, 0.5);
-                let mut normal = Point::new(-d.y, d.x) * (1.0 / p.dist(q));
-                if normal.dot(pts[opposite] - mid) > 0.0 {
-                    normal = normal * -1.0;
-                }
-                let height = p.dist(q) * 3f64.sqrt() / 2.0 * rng.random_range(0.7..1.3);
-                let apex = mid + normal * height + d * rng.random_range(-0.25..0.25);
-                fits(&pts, &tris, apex, p, q).then_some((apex, a, b))
-            });
-            let Some((apex, a, b)) = placed else { continue 'restart };
-            pts.push(apex);
-            tris.push([a, b, pts.len() - 1]);
-        }
-        return (pts, tris);
-    }
-}
-
-/// An outline edge's ends, and the third corner of its triangle.
-type OutlineEdge = (usize, usize, usize);
-
-/// The whole outline, and the part of it on the newest triangle.
-fn outline(tris: &[[usize; 3]]) -> (Vec<OutlineEdge>, Vec<OutlineEdge>) {
-    let (mut all, mut fresh) = (Vec::new(), Vec::new());
-    for (i, &[a, b, c]) in tris.iter().enumerate() {
-        for edge @ (u, v, _) in [(a, b, c), (b, c, a), (c, a, b)] {
-            if !tris.iter().any(|t| t != &tris[i] && t.contains(&u) && t.contains(&v)) {
-                all.push(edge);
-                if i == tris.len() - 1 {
-                    fresh.push(edge);
-                }
-            }
-        }
-    }
-    (all, fresh)
-}
-
-/// Whether a new flap on edge pq lies flat on the sheet without overlapping it or making slivers.
-fn fits(pts: &[Point], tris: &[[usize; 3]], apex: Point, p: Point, q: Point) -> bool {
-    const GAP: f64 = 0.25;
-    if ![p, q].iter().all(|&e| (0.6..1.5).contains(&apex.dist(e))) {
-        return false;
-    }
-    if pts.iter().any(|&v| v.dist(apex) < 0.5 || inside(&[apex, p, q], v)) {
-        return false;
-    }
-    tris.iter().all(|t| {
-        let corners = t.map(|i| pts[i]);
-        !inside(&corners, apex)
-            && (0..3).all(|k| {
-                let (u, w) = (corners[k], corners[(k + 1) % 3]);
-                let cuts = [p, q].iter().any(|&e| e != u && e != w && segments_cross((apex, e), (u, w)));
-                let crowds_new = u != p && u != q && [p, q].iter().any(|&e| segment_dist(u, (apex, e)) <= GAP);
-                !cuts && !crowds_new && segment_dist(apex, (u, w)) > GAP
-            })
-    })
-}
-
-// ---------------------------------------------------------------------------------------------
-// Geometry
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-struct Point {
-    x: f64,
-    y: f64,
-}
-
-impl Point {
-    const ZERO: Point = Point::new(0.0, 0.0);
-
-    const fn new(x: f64, y: f64) -> Self {
-        Point { x, y }
-    }
-
-    fn dot(self, o: Point) -> f64 {
-        self.x * o.x + self.y * o.y
-    }
-
-    fn cross(self, o: Point) -> f64 {
-        self.x * o.y - self.y * o.x
-    }
-
-    /// Plain sqrt rather than hypot: sqrt is exact everywhere while hypot comes from the system's
-    /// math library, and a seed has to generate the same level on every platform.
-    fn dist(self, o: Point) -> f64 {
-        let d = self - o;
-        d.dot(d).sqrt()
-    }
-
-    fn lerp(self, o: Point, t: f64) -> Point {
-        self + (o - self) * t
-    }
-
-    fn rotate(self, angle: f64) -> Point {
-        let (sin, cos) = angle.sin_cos();
-        Point::new(self.x * cos - self.y * sin, self.x * sin + self.y * cos)
-    }
-}
-
-impl Add for Point {
-    type Output = Point;
-    fn add(self, o: Point) -> Point {
-        Point::new(self.x + o.x, self.y + o.y)
-    }
-}
-
-impl Sub for Point {
-    type Output = Point;
-    fn sub(self, o: Point) -> Point {
-        Point::new(self.x - o.x, self.y - o.y)
-    }
-}
-
-impl Mul<f64> for Point {
-    type Output = Point;
-    fn mul(self, k: f64) -> Point {
-        Point::new(self.x * k, self.y * k)
-    }
-}
-
 /// Around the center rather than straight across, so dots glide along the circle.
 fn polar_lerp(a: Point, b: Point, t: f64) -> Point {
     let (ra, rb) = (a.dist(Point::ZERO), b.dist(Point::ZERO));
@@ -711,44 +381,6 @@ fn polar_lerp(a: Point, b: Point, t: f64) -> Point {
 
 fn ease(t: f64) -> f64 {
     t * t * (3.0 - 2.0 * t)
-}
-
-fn slot_pos(slot: usize, n: usize) -> Point {
-    let angle = TAU * slot as f64 / n as f64;
-    Point::new(angle.cos(), angle.sin())
-}
-
-/// Positive when p is left of the line from u to v.
-fn side(u: Point, v: Point, p: Point) -> f64 {
-    (v - u).cross(p - u)
-}
-
-/// Strictly inside, so points on the border don't count.
-fn inside(&[a, b, c]: &[Point; 3], p: Point) -> bool {
-    let (d1, d2, d3) = (side(a, b, p), side(b, c, p), side(c, a, p));
-    let eps = 1e-9;
-    (d1 > eps && d2 > eps && d3 > eps) || (d1 < -eps && d2 < -eps && d3 < -eps)
-}
-
-fn segments_cross((a, b): (Point, Point), (c, d): (Point, Point)) -> bool {
-    side(a, b, c) * side(a, b, d) < 0.0 && side(c, d, a) * side(c, d, b) < 0.0
-}
-
-fn intersection((a, b): (Point, Point), (c, d): (Point, Point)) -> Option<Point> {
-    let (r, s) = (b - a, d - c);
-    let denom = r.cross(s);
-    if denom == 0.0 {
-        return None;
-    }
-    let t = (c - a).cross(s) / denom;
-    let u = (c - a).cross(r) / denom;
-    ((0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)).then(|| a.lerp(b, t))
-}
-
-fn segment_dist(p: Point, (a, b): (Point, Point)) -> f64 {
-    let d = b - a;
-    let t = ((p - a).dot(d) / d.dot(d)).clamp(0.0, 1.0);
-    a.lerp(b, t).dist(p)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -778,7 +410,7 @@ impl Flaps {
     fn paper(game: &Game, palette: Palette, crossings: Vec<Point>) -> Self {
         Flaps {
             tris: game.flap_pos(),
-            creases: game
+            creases: game.puzzle
                 .edges
                 .iter()
                 .map(|e| {
@@ -1152,13 +784,6 @@ fn rotate_about(v: [f64; 3], (a, b): (Point, Point), angle: f64) -> [f64; 3] {
     ]
 }
 
-/// Inside or on the border.
-fn touches(&[a, b, c]: &[Point; 3], p: Point) -> bool {
-    let s = [side(a, b, p), side(b, c, p), side(c, a, p)];
-    let eps = 1e-9;
-    s.iter().all(|&d| d >= -eps) || s.iter().all(|&d| d <= eps)
-}
-
 // ---------------------------------------------------------------------------------------------
 // Clipboard
 
@@ -1219,7 +844,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Option<(Seed, Option<usize>
                 let day = args.next_if_map(|a| parse_day(&a, today()).ok_or(a)).unwrap_or_else(today);
                 (Some((Seed::daily(day), Some(day))), None)
             }
-            "--rand" => (Some((Seed::random(), None)), None),
+            "--rand" => (Some((random_seed(), None)), None),
             code if code.contains('/') => parse_code(code).map(|(s, l)| (Some((s, None)), Some(l)))?,
             n => (None, Some(parse_level(n)?)),
         };
@@ -1240,7 +865,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Option<(Seed, Option<usize>
 /// never been played.
 fn jump(shelf: &mut BTreeMap<usize, Game>, game: &mut Game, step: isize, scores: &Scores) {
     let level = game.level().strict_add_signed(step);
-    let mut next = shelf.remove(&level).unwrap_or_else(|| Game::new(game.seed, level, scores));
+    let mut next = shelf.remove(&level).unwrap_or_else(|| Game::new(game.puzzle.seed, level, scores));
     next.touched_at = Instant::now();
     shelf.insert(game.level(), std::mem::replace(game, next));
 }
