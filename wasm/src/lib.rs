@@ -15,6 +15,23 @@ impl Attempt {
         Attempt(uc::Attempt::new(uc::Puzzle::new(uc::Seed(seed & uc::Seed::MASK), level.max(1) as usize)))
     }
 
+    /// A level from a drawn sheet: corners as x, y pairs in order around the outline, and the
+    /// triangles cutting it up as three corner indices each.
+    #[wasm_bindgen(js_name = fromSheet)]
+    pub fn from_sheet(seed: u32, level: u32, corners: &[f64], triangles: &[u32]) -> Result<Attempt, JsError> {
+        let n = corners.len() / 2;
+        if !corners.len().is_multiple_of(2) || n < 3 {
+            return Err(JsError::new("a sheet needs at least three corners, as x, y pairs"));
+        }
+        if triangles.len() != 3 * (n - 2) || triangles.iter().any(|&v| v as usize >= n) {
+            return Err(JsError::new("a sheet of n corners needs n - 2 triangles of corner indices"));
+        }
+        let shape = corners.chunks(2).map(|xy| uc::Point::new(xy[0], xy[1])).collect();
+        let flaps = triangles.chunks(3).map(|t| [t[0] as usize, t[1] as usize, t[2] as usize]).collect();
+        let seed = uc::Seed(seed & uc::Seed::MASK);
+        Ok(Attempt(uc::Attempt::new(uc::Puzzle::from_sheet(seed, level.max(1) as usize, shape, flaps))))
+    }
+
     #[wasm_bindgen(getter)]
     pub fn seed(&self) -> u32 {
         self.0.puzzle.seed.0
@@ -115,6 +132,11 @@ impl Attempt {
     #[wasm_bindgen(js_name = unfoldTarget)]
     pub fn unfold_target(&self) -> Vec<f64> {
         flatten(&self.0.unfold_target())
+    }
+
+    /// The sheet the way up it was drawn, x, y pairs per vertex within the unit circle.
+    pub fn upright(&self) -> Vec<f64> {
+        flatten(&self.0.puzzle.upright())
     }
 }
 

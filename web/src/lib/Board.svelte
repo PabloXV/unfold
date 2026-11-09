@@ -8,7 +8,16 @@
 	import type { Game } from './game.svelte';
 	import type { Point } from './unfold';
 
-	let { game, showCursor }: { game: Game; showCursor: boolean } = $props();
+	let {
+		game,
+		showCursor,
+		colors
+	}: {
+		game: Game;
+		showCursor: boolean;
+		/** Per flap, in `game.flaps` order: what the paper turns once solved. Plain paper without. */
+		colors?: string[];
+	} = $props();
 
 	/** How far a hovered or carried dot stands out, as a fraction of the radius. */
 	const LIFT = 0.06;
@@ -221,8 +230,14 @@
 
 	{#if pos.length === game.dots}
 		{#each game.flaps as flap, k (k)}
-			<polygon class="flap" points={flap.map((v) => pt(pos[v])).join(' ')} filter="url(#shadow)" />
+			<polygon
+				class="flap"
+				points={flap.map((v) => pt(pos[v])).join(' ')}
+				filter="url(#shadow)"
+				style:fill={game.solved && colors ? colors[k] : undefined}
+			/>
 			{#each creasesOn[k] as e (e.a * 1000 + e.b)}
+				<!-- on a colored sheet the outline fades too, leaving the picture -->
 				<line
 					class="crease"
 					class:fold={e.shared}
@@ -230,7 +245,7 @@
 					y1={-pos[e.a].y}
 					x2={pos[e.b].x}
 					y2={-pos[e.b].y}
-					style:opacity={e.shared ? 1 - unfold : 1}
+					style:opacity={e.shared ? 1 - unfold : colors ? 1 - 0.85 * unfold : 1}
 				/>
 			{/each}
 			{#each marks.filter((m) => m.layer === k) as m, i (i)}
@@ -270,7 +285,7 @@
 	}
 	.flap {
 		fill: var(--paper);
-		transition: fill 0.6s;
+		transition: fill 1.2s ease-in;
 	}
 	.solved .flap {
 		fill: var(--paper-solved);

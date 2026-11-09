@@ -27,9 +27,20 @@ export class Game {
 	unfolded: Point[] = [];
 
 	#attempt: Attempt;
+	/** Unfold the way up the sheet was drawn, rather than turned to match the circle. */
+	#upright: boolean;
+	#keepScores: boolean;
 
-	constructor(seed: number, level: number) {
-		this.#attempt = new Attempt(seed, level);
+	/** A level grown from a seed, with its best score kept in this browser. */
+	static ofSeed(seed: number, level: number): Game {
+		return new Game(new Attempt(seed, level), { keepScores: true });
+	}
+
+	constructor(attempt: Attempt, { upright = false, keepScores = false } = {}) {
+		this.#attempt = attempt;
+		this.#upright = upright;
+		this.#keepScores = keepScores;
+		const { seed, level } = attempt;
 		this.seed = seed;
 		this.level = level;
 		this.code = this.#attempt.code;
@@ -43,7 +54,7 @@ export class Game {
 			topFlap: e[4 * i + 2],
 			shared: e[4 * i + 3] === 1
 		}));
-		this.priorBest = bestMoves(seed, level);
+		this.priorBest = keepScores ? bestMoves(seed, level) : undefined;
 		this.#sync();
 	}
 
@@ -103,9 +114,9 @@ export class Game {
 		const counted = this.#attempt.setDown();
 		this.#sync();
 		if (counted && this.solved) {
-			this.unfolded = pairs(this.#attempt.unfoldTarget());
+			this.unfolded = pairs(this.#upright ? this.#attempt.upright() : this.#attempt.unfoldTarget());
 			this.solvedAt = performance.now();
-			record(this.seed, this.level, this.moves);
+			if (this.#keepScores) record(this.seed, this.level, this.moves);
 		}
 	}
 

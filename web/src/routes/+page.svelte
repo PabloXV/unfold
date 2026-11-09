@@ -49,7 +49,7 @@
 		for (const g of shelf.values()) g.free();
 		shelf.clear();
 		game?.free();
-		game = new Game(seed, level);
+		game = Game.ofSeed(seed, level);
 		showUrl();
 	}
 
@@ -64,7 +64,7 @@
 		if (!game || game.level + step < 1) return;
 		const level = game.level + step;
 		shelf.set(game.level, game);
-		game = shelf.get(level) ?? new Game(game.seed, level);
+		game = shelf.get(level) ?? Game.ofSeed(game.seed, level);
 		shelf.delete(level);
 		restartAsked = false;
 		showUrl();
@@ -82,7 +82,7 @@
 		restartAsked = false;
 		const { seed, level } = game;
 		game.free();
-		game = new Game(seed, level);
+		game = Game.ofSeed(seed, level);
 	}
 
 	function flash(text: string): void {
@@ -183,6 +183,7 @@
 			Drag dots around the circle until no creases cross.<br />
 			<span class="keys">Keys: ← → move · space pick up / set down · esc put back · [ ] levels · r restart · c copy</span>
 		</p>
+		<p class="hint"><a href="mystery">Try the mystery prototype →</a></p>
 	{/if}
 </main>
 

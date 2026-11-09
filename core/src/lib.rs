@@ -132,13 +132,29 @@ pub struct Puzzle {
 }
 
 impl Puzzle {
+    /// A level grown at random from its seed.
     pub fn new(seed: Seed, level: usize) -> Self {
         let mut rng = seed.rng(level);
         let n = level + LEVEL_1_DOTS - 1;
-        let (shape, mut flaps) = grow(n, &mut rng);
+        let (shape, flaps) = grow(n, &mut rng);
+        Self::fold(seed, level, shape, flaps, rng)
+    }
+
+    /// A level from a sheet drawn elsewhere: `shape` lists the corners of a simple polygon in
+    /// order around its outline, and `flaps` cuts it into triangles corner to corner. The seed
+    /// only decides how it's stacked and scrambled. Any such sheet makes a solvable puzzle, since
+    /// a triangulated polygon lies flat around a circle in exactly one order, its outline's.
+    pub fn from_sheet(seed: Seed, level: usize, shape: Vec<Point>, flaps: Vec<[usize; 3]>) -> Self {
+        Self::fold(seed, level, shape, flaps, seed.rng(level))
+    }
+
+    /// Stacks the flaps in a random order and scrambles the dots around the circle.
+    fn fold(seed: Seed, level: usize, shape: Vec<Point>, mut flaps: Vec<[usize; 3]>, mut rng: Xoshiro256PlusPlus) -> Self {
+        let n = shape.len();
         flaps.shuffle(&mut rng);
         let mut puzzle = Puzzle { seed, level, edges: edges_of(&flaps), flaps, shape, start: (0..n).collect() };
-        // always shuffle at least once: vertices are numbered in growth order, which gives the puzzle away
+        // always shuffle at least once: vertices are numbered in outline or growth order, either of
+        // which gives the puzzle away
         loop {
             puzzle.start.shuffle(&mut rng);
             if puzzle.crossings(&puzzle.start) > 0 {
@@ -189,13 +205,23 @@ impl Puzzle {
         };
         let (a, b) = (fit(1.0), fit(-1.0));
         let (_, pts, angle) = if a.0 >= b.0 { a } else { b };
-        let pts: Vec<Point> = pts.iter().map(|p| p.rotate(angle)).collect();
-        let lo = pts.iter().fold(Point::new(f64::MAX, f64::MAX), |m, p| Point::new(m.x.min(p.x), m.y.min(p.y)));
-        let hi = pts.iter().fold(Point::new(f64::MIN, f64::MIN), |m, p| Point::new(m.x.max(p.x), m.y.max(p.y)));
-        let center = lo.lerp(hi, 0.5);
-        let radius = pts.iter().map(|&p| p.dist(center)).fold(0.0, f64::max);
-        pts.iter().map(|&p| (p - center) * (1.0 / radius)).collect()
+        fit_unit_circle(pts.iter().map(|p| p.rotate(angle)).collect())
     }
+
+    /// The shape the way up it was drawn, centered and scaled to fit the unit circle: for a sheet
+    /// that's a picture of something, which shouldn't unfold sideways or mirrored.
+    pub fn upright(&self) -> Vec<Point> {
+        fit_unit_circle(self.shape.clone())
+    }
+}
+
+/// Centered on the middle of its bounding box and scaled so the farthest point is 1 away.
+fn fit_unit_circle(pts: Vec<Point>) -> Vec<Point> {
+    let lo = pts.iter().fold(Point::new(f64::MAX, f64::MAX), |m, p| Point::new(m.x.min(p.x), m.y.min(p.y)));
+    let hi = pts.iter().fold(Point::new(f64::MIN, f64::MIN), |m, p| Point::new(m.x.max(p.x), m.y.max(p.y)));
+    let center = lo.lerp(hi, 0.5);
+    let radius = pts.iter().map(|&p| p.dist(center)).fold(0.0, f64::max);
+    pts.iter().map(|&p| (p - center) * (1.0 / radius)).collect()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -629,6 +655,22 @@ mod tests {
             attempt.pick_up(0);
             assert_eq!(attempt.carried(), None, "no picking up once solved");
         }
+    }
+
+    /// A hexagon fanned from one corner, the sheet scrambled, then solved by laying the dots back
+    /// in outline order.
+    #[test]
+    fn drawn_sheets_fold_and_solve() {
+        let shape: Vec<Point> = (0..6).map(|i| slot_pos(i, 6) * 2.0 + Point::new(5.0, 1.0)).collect();
+        let flaps = vec![[0, 1, 2], [0, 2, 3], [0, 3, 4], [0, 4, 5]];
+        let p = Puzzle::from_sheet(Seed(42), 3, shape, flaps);
+        assert_eq!(p.edges.len(), 2 * 6 - 3);
+        assert!(p.crossings(&p.start) > 0);
+        assert_eq!(p.crossings(&(0..6).collect::<Vec<_>>()), 0, "outline order is the solution");
+        // upright keeps the drawing's orientation, only moved and scaled into the unit circle
+        let up = p.upright();
+        assert!((up[0].x - 1.0).abs() < 1e-12 && up[0].y.abs() < 1e-12, "{:?}", up[0]);
+        assert!(up.iter().all(|q| q.dist(Point::ZERO) <= 1.0 + 1e-12));
     }
 
     #[test]
