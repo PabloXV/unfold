@@ -16,8 +16,10 @@
 	const GLIDE = 0.04;
 	const UNFOLD_DELAY = 150;
 	const UNFOLD_TIME = 1200;
-	/** How near a press has to be to a dot to pick it up, in radii. */
-	const GRAB = 0.22;
+	/** A press this far from the center, in radii, grabs the dot nearest it in angle, so on a
+	 * phone the whole band around the ring is the target, not just the dot. */
+	const GRAB_FROM = 0.55;
+	const GRAB_TO = 1.3;
 	const TAU = 2 * Math.PI;
 
 	let svg: SVGSVGElement;
@@ -117,11 +119,14 @@
 	}
 
 	function nearest(p: Point): number | undefined {
+		const r = Math.hypot(p.x, p.y);
+		if (r < GRAB_FROM || r > GRAB_TO) return;
+		const a = Math.atan2(p.y, p.x);
 		let best: number | undefined;
-		let bestDist = GRAB;
+		let bestTurn = Infinity;
 		pos.forEach((q, v) => {
-			const d = Math.hypot(q.x - p.x, q.y - p.y);
-			if (d < bestDist) [best, bestDist] = [v, d];
+			const turn = Math.abs(wrap(Math.atan2(q.y, q.x) - a));
+			if (turn < bestTurn) [best, bestTurn] = [v, turn];
 		});
 		return best;
 	}
