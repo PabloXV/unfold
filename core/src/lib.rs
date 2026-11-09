@@ -207,9 +207,10 @@ struct Carry {
     before: Vec<usize>,
 }
 
-/// A level being played. A move is picking a dot up, carrying it along the circle, and setting
-/// it down somewhere new; the puzzle is solved when a move leaves no creases crossing.
-pub struct Play {
+/// One go at a puzzle, from its scrambled start until solved; restarting begins a new one. A move
+/// is picking a dot up, carrying it along the circle, and setting it down somewhere new, and the
+/// puzzle is solved when a move leaves no creases crossing.
+pub struct Attempt {
     pub puzzle: Puzzle,
     slot_of: Vec<usize>,
     carry: Option<Carry>,
@@ -217,9 +218,9 @@ pub struct Play {
     solved: bool,
 }
 
-impl Play {
+impl Attempt {
     pub fn new(puzzle: Puzzle) -> Self {
-        Play { slot_of: puzzle.start.clone(), puzzle, carry: None, moves: 0, solved: false }
+        Attempt { slot_of: puzzle.start.clone(), puzzle, carry: None, moves: 0, solved: false }
     }
 
     /// Each vertex's slot on the circle.
@@ -570,27 +571,27 @@ mod tests {
     /// A dot carried all the way around lands between the same two dots, so it's no move.
     #[test]
     fn going_full_circle_isnt_a_move() {
-        let mut play = Play::new(Puzzle::new(Seed(0xABC123), 4));
-        let start = play.slot_of().to_vec();
-        play.pick_up(2);
-        for _ in 0..play.puzzle.dots() - 1 {
-            play.step(1);
+        let mut attempt = Attempt::new(Puzzle::new(Seed(0xABC123), 4));
+        let start = attempt.slot_of().to_vec();
+        attempt.pick_up(2);
+        for _ in 0..attempt.puzzle.dots() - 1 {
+            attempt.step(1);
         }
-        assert_ne!(play.slot_of(), start, "the others shifted round by one");
-        assert!(!play.set_down());
-        assert_eq!(play.moves(), 0);
+        assert_ne!(attempt.slot_of(), start, "the others shifted round by one");
+        assert!(!attempt.set_down());
+        assert_eq!(attempt.moves(), 0);
     }
 
     #[test]
     fn putting_back_restores_everything() {
-        let mut play = Play::new(Puzzle::new(Seed(0xABC123), 4));
-        let start = play.slot_of().to_vec();
-        play.pick_up(1);
-        play.step(-1);
-        play.step(-1);
-        assert_eq!(play.put_back(), Some(1));
-        assert_eq!(play.slot_of(), start);
-        assert_eq!((play.moves(), play.carried()), (0, None));
+        let mut attempt = Attempt::new(Puzzle::new(Seed(0xABC123), 4));
+        let start = attempt.slot_of().to_vec();
+        attempt.pick_up(1);
+        attempt.step(-1);
+        attempt.step(-1);
+        assert_eq!(attempt.put_back(), Some(1));
+        assert_eq!(attempt.slot_of(), start);
+        assert_eq!((attempt.moves(), attempt.carried()), (0, None));
     }
 
     /// Random play until solved: every move keeps the dots a permutation of the slots, counts
@@ -599,33 +600,33 @@ mod tests {
     fn random_play_reaches_a_solve() {
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(7);
         for level in 1..=3 {
-            let mut play = Play::new(Puzzle::new(Seed(0x5EED00), level));
-            let n = play.puzzle.dots();
+            let mut attempt = Attempt::new(Puzzle::new(Seed(0x5EED00), level));
+            let n = attempt.puzzle.dots();
             for _ in 0..100_000 {
                 let v = rng.random_range(0..n);
-                let before = neighbors(play.slot_of(), v);
-                play.pick_up(v);
+                let before = neighbors(attempt.slot_of(), v);
+                attempt.pick_up(v);
                 let dir = if rng.random::<bool>() { 1 } else { -1 };
                 for _ in 0..rng.random_range(1..n) {
-                    play.step(dir);
+                    attempt.step(dir);
                 }
-                let moves = play.moves();
-                let counted = play.set_down();
-                assert_eq!(counted, neighbors(play.slot_of(), v) != before);
-                assert_eq!(play.moves(), moves + counted as usize);
-                let mut slots = play.slot_of().to_vec();
+                let moves = attempt.moves();
+                let counted = attempt.set_down();
+                assert_eq!(counted, neighbors(attempt.slot_of(), v) != before);
+                assert_eq!(attempt.moves(), moves + counted as usize);
+                let mut slots = attempt.slot_of().to_vec();
                 slots.sort();
                 assert_eq!(slots, (0..n).collect::<Vec<_>>());
                 // unsolved going in, since the loop stops at a solve
-                assert_eq!(play.solved(), counted && play.crossings() == 0);
-                if play.solved() {
+                assert_eq!(attempt.solved(), counted && attempt.crossings() == 0);
+                if attempt.solved() {
                     break;
                 }
             }
-            assert!(play.solved(), "level {level} never solved");
-            assert_eq!(play.crossings(), 0);
-            play.pick_up(0);
-            assert_eq!(play.carried(), None, "no picking up once solved");
+            assert!(attempt.solved(), "level {level} never solved");
+            assert_eq!(attempt.crossings(), 0);
+            attempt.pick_up(0);
+            assert_eq!(attempt.carried(), None, "no picking up once solved");
         }
     }
 

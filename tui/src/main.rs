@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::f64::consts::{PI, TAU};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
-use unfold_core::{Edge, Play, Point, Puzzle, Seed, days_from_civil, format_day, inside, intersection, parse_code, parse_day, parse_level, slot_pos, touches};
+use unfold_core::{Edge, Attempt, Point, Puzzle, Seed, days_from_civil, format_day, inside, intersection, parse_code, parse_day, parse_level, slot_pos, touches};
 
 const SLIDE_TIME: Duration = Duration::from_millis(150);
 const UNFOLD_TIME: Duration = Duration::from_millis(1200);
@@ -129,9 +129,9 @@ struct Slide {
     started: Instant,
 }
 
-/// A level being played, with everything about showing it.
+/// An attempt, with everything about showing it in the terminal.
 struct Game {
-    play: Play,
+    attempt: Attempt,
     prior_best: Option<usize>,
     unfolded: Vec<Point>,
     cursor: usize,
@@ -147,10 +147,10 @@ struct Game {
 
 impl Game {
     fn new(seed: Seed, level: usize, scores: &Scores) -> Self {
-        let play = Play::new(Puzzle::new(seed, level));
-        let n = play.puzzle.dots();
+        let attempt = Attempt::new(Puzzle::new(seed, level));
+        let n = attempt.puzzle.dots();
         Game {
-            play,
+            attempt,
             prior_best: scores.get(seed, level),
             unfolded: Vec::new(),
             cursor: 0,
@@ -165,19 +165,19 @@ impl Game {
     }
 
     fn level(&self) -> usize {
-        self.play.puzzle.level
+        self.attempt.puzzle.level
     }
 
     fn code(&self) -> String {
-        self.play.puzzle.code()
+        self.attempt.puzzle.code()
     }
 
     fn moves(&self) -> usize {
-        self.play.moves()
+        self.attempt.moves()
     }
 
     fn slot_of(&self) -> &[usize] {
-        self.play.slot_of()
+        self.attempt.slot_of()
     }
 
     fn copy_code(&mut self) {
@@ -199,7 +199,7 @@ impl Game {
     }
 
     fn solved(&self) -> bool {
-        self.play.solved()
+        self.attempt.solved()
     }
 
     fn new_best(&self) -> bool {
@@ -211,13 +211,13 @@ impl Game {
     }
 
     fn crossings(&self) -> usize {
-        self.play.crossings()
+        self.attempt.crossings()
     }
 
     /// Only the crossings not hidden under a higher flap.
     fn visible_crossings(&self) -> Vec<Point> {
         let flaps = self.flap_pos();
-        self.play
+        self.attempt
             .puzzle
             .crossing_pairs(self.slot_of())
             .into_iter()
@@ -230,7 +230,7 @@ impl Game {
     }
 
     fn vertex_at(&self, slot: usize) -> usize {
-        self.play.vertex_at(slot)
+        self.attempt.vertex_at(slot)
     }
 
     /// +1 is counterclockwise, -1 clockwise. A carried dot comes along, trading places with the
@@ -239,7 +239,7 @@ impl Game {
         let n = self.slot_of().len() as isize;
         if self.carrying() {
             self.begin_slide();
-            self.play.step(dir);
+            self.attempt.step(dir);
         }
         self.cursor = (self.cursor as isize + dir).rem_euclid(n) as usize;
         self.touched_at = Instant::now();
@@ -249,10 +249,10 @@ impl Game {
     fn select(&mut self) {
         self.touched_at = Instant::now();
         if !self.carrying() {
-            self.play.pick_up(self.vertex_at(self.cursor));
-        } else if self.play.set_down() && self.play.solved() {
+            self.attempt.pick_up(self.vertex_at(self.cursor));
+        } else if self.attempt.set_down() && self.attempt.solved() {
             self.solved_at = Some(Instant::now());
-            self.unfolded = self.play.unfold_target();
+            self.unfolded = self.attempt.unfold_target();
         }
     }
 
@@ -261,13 +261,13 @@ impl Game {
             return;
         }
         self.begin_slide();
-        let v = self.play.put_back().unwrap();
+        let v = self.attempt.put_back().unwrap();
         self.cursor = self.slot_of()[v];
         self.touched_at = Instant::now();
     }
 
     fn carrying(&self) -> bool {
-        self.play.carried().is_some()
+        self.attempt.carried().is_some()
     }
 
     /// Call before moving dots, so they glide from where they're drawn, even mid-slide.
@@ -319,7 +319,7 @@ impl Game {
     }
 
     fn flap_pos(&self) -> Vec<[Point; 3]> {
-        self.play.puzzle.flaps.iter().map(|f| f.map(|v| self.vertex_pos(v))).collect()
+        self.attempt.puzzle.flaps.iter().map(|f| f.map(|v| self.vertex_pos(v))).collect()
     }
 
     fn vertex_pos(&self, v: usize) -> Point {
@@ -402,7 +402,7 @@ impl Flaps {
     fn paper(game: &Game, palette: Palette, crossings: Vec<Point>) -> Self {
         Flaps {
             tris: game.flap_pos(),
-            creases: game.play.puzzle
+            creases: game.attempt.puzzle
                 .edges
                 .iter()
                 .map(|e| {
@@ -857,7 +857,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Option<(Seed, Option<usize>
 /// never been played.
 fn jump(shelf: &mut BTreeMap<usize, Game>, game: &mut Game, step: isize, scores: &Scores) {
     let level = game.level().strict_add_signed(step);
-    let mut next = shelf.remove(&level).unwrap_or_else(|| Game::new(game.play.puzzle.seed, level, scores));
+    let mut next = shelf.remove(&level).unwrap_or_else(|| Game::new(game.attempt.puzzle.seed, level, scores));
     next.touched_at = Instant::now();
     shelf.insert(game.level(), std::mem::replace(game, next));
 }
