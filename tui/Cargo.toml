@@ -8,6 +8,7 @@ name = "unfld"
 path = "src/main.rs"
 
 [dependencies]
+jiff = "0.2.41"
 # thread_rng only for --rand
 rand = { workspace = true, features = ["thread_rng"] }
 ratatui = "0.30.2"

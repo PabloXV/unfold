@@ -197,9 +197,99 @@ impl Puzzle {
     }
 }
 
-/// The dots on either side of v, counterclockwise first. Setting a carried dot down between the
-/// same two it left changes nothing, so it isn't a move.
-pub fn neighbors(slot_of: &[usize], v: usize) -> (usize, usize) {
+// ---------------------------------------------------------------------------------------------
+// Playing
+
+/// A dot picked up and walked around the circle, pushing the others along one slot at a time.
+struct Carry {
+    v: usize,
+    /// Where every dot was at pick up, to put them back.
+    before: Vec<usize>,
+}
+
+/// A level being played. A move is picking a dot up, carrying it along the circle, and setting
+/// it down somewhere new; the puzzle is solved when a move leaves no creases crossing.
+pub struct Play {
+    pub puzzle: Puzzle,
+    slot_of: Vec<usize>,
+    carry: Option<Carry>,
+    moves: usize,
+    solved: bool,
+}
+
+impl Play {
+    pub fn new(puzzle: Puzzle) -> Self {
+        Play { slot_of: puzzle.start.clone(), puzzle, carry: None, moves: 0, solved: false }
+    }
+
+    /// Each vertex's slot on the circle.
+    pub fn slot_of(&self) -> &[usize] {
+        &self.slot_of
+    }
+
+    pub fn vertex_at(&self, slot: usize) -> usize {
+        self.slot_of.iter().position(|&s| s == slot).unwrap()
+    }
+
+    pub fn moves(&self) -> usize {
+        self.moves
+    }
+
+    pub fn solved(&self) -> bool {
+        self.solved
+    }
+
+    pub fn crossings(&self) -> usize {
+        self.puzzle.crossings(&self.slot_of)
+    }
+
+    pub fn carried(&self) -> Option<usize> {
+        self.carry.as_ref().map(|c| c.v)
+    }
+
+    /// Does nothing once solved or while already carrying.
+    pub fn pick_up(&mut self, v: usize) {
+        if !self.solved && self.carry.is_none() {
+            self.carry = Some(Carry { v, before: self.slot_of.clone() });
+        }
+    }
+
+    /// +1 is counterclockwise, -1 clockwise. The carried dot trades places with the dot it steps
+    /// onto. Does nothing when not carrying.
+    pub fn step(&mut self, dir: isize) {
+        let Some(v) = self.carried() else { return };
+        let n = self.slot_of.len() as isize;
+        let w = self.vertex_at((self.slot_of[v] as isize + dir).rem_euclid(n) as usize);
+        self.slot_of.swap(v, w);
+    }
+
+    /// Whether it counted as a move. Setting a dot down between the same two dots it left changes
+    /// nothing, so it doesn't.
+    pub fn set_down(&mut self) -> bool {
+        let Some(carry) = self.carry.take() else { return false };
+        if neighbors(&self.slot_of, carry.v) == neighbors(&carry.before, carry.v) {
+            return false;
+        }
+        self.moves += 1;
+        self.solved = self.crossings() == 0;
+        true
+    }
+
+    /// Returns every dot to where it was at pick up, and the dot that was carried.
+    pub fn put_back(&mut self) -> Option<usize> {
+        let carry = self.carry.take()?;
+        self.slot_of = carry.before;
+        Some(carry.v)
+    }
+
+    /// Where the solved circle unfolds to, per vertex.
+    pub fn unfold_target(&self) -> Vec<Point> {
+        self.puzzle.unfold_target(&self.slot_of)
+    }
+}
+
+/// The dots on either side of v, counterclockwise first.
+fn neighbors(slot_of: &[usize], v: usize) -> (usize, usize) {
     let n = slot_of.len();
     let at = |slot: usize| slot_of.iter().position(|&s| s == slot % n).unwrap();
     (at(slot_of[v] + 1), at(slot_of[v] + n - 1))
@@ -474,6 +564,68 @@ mod tests {
             assert_eq!(p.dots(), level + LEVEL_1_DOTS - 1);
             assert_eq!(p.edges.len(), 2 * p.dots() - 3);
             assert!(p.crossings(&p.start) > 0);
+        }
+    }
+
+    /// A dot carried all the way around lands between the same two dots, so it's no move.
+    #[test]
+    fn going_full_circle_isnt_a_move() {
+        let mut play = Play::new(Puzzle::new(Seed(0xABC123), 4));
+        let start = play.slot_of().to_vec();
+        play.pick_up(2);
+        for _ in 0..play.puzzle.dots() - 1 {
+            play.step(1);
+        }
+        assert_ne!(play.slot_of(), start, "the others shifted round by one");
+        assert!(!play.set_down());
+        assert_eq!(play.moves(), 0);
+    }
+
+    #[test]
+    fn putting_back_restores_everything() {
+        let mut play = Play::new(Puzzle::new(Seed(0xABC123), 4));
+        let start = play.slot_of().to_vec();
+        play.pick_up(1);
+        play.step(-1);
+        play.step(-1);
+        assert_eq!(play.put_back(), Some(1));
+        assert_eq!(play.slot_of(), start);
+        assert_eq!((play.moves(), play.carried()), (0, None));
+    }
+
+    /// Random play until solved: every move keeps the dots a permutation of the slots, counts
+    /// exactly when a dot's neighbors changed, and solving is exactly reaching no crossings.
+    #[test]
+    fn random_play_reaches_a_solve() {
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(7);
+        for level in 1..=3 {
+            let mut play = Play::new(Puzzle::new(Seed(0x5EED00), level));
+            let n = play.puzzle.dots();
+            for _ in 0..100_000 {
+                let v = rng.random_range(0..n);
+                let before = neighbors(play.slot_of(), v);
+                play.pick_up(v);
+                let dir = if rng.random::<bool>() { 1 } else { -1 };
+                for _ in 0..rng.random_range(1..n) {
+                    play.step(dir);
+                }
+                let moves = play.moves();
+                let counted = play.set_down();
+                assert_eq!(counted, neighbors(play.slot_of(), v) != before);
+                assert_eq!(play.moves(), moves + counted as usize);
+                let mut slots = play.slot_of().to_vec();
+                slots.sort();
+                assert_eq!(slots, (0..n).collect::<Vec<_>>());
+                // unsolved going in, since the loop stops at a solve
+                assert_eq!(play.solved(), counted && play.crossings() == 0);
+                if play.solved() {
+                    break;
+                }
+            }
+            assert!(play.solved(), "level {level} never solved");
+            assert_eq!(play.crossings(), 0);
+            play.pick_up(0);
+            assert_eq!(play.carried(), None, "no picking up once solved");
         }
     }
 
