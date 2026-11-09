@@ -1,0 +1,306 @@
+<!--
+	The paper on its circle. Flaps are drawn bottom to top as filled triangles, each followed by
+	the creases and crossing marks that belong to it, so higher paper hides what's under it
+	without any further work. Dots glide around the circle when they move, lift when hovered or
+	carried, and the whole sheet unfolds into its shape once solved.
+-->
+<script lang="ts">
+	import type { Game } from './game.svelte';
+	import type { Point } from './unfold';
+
+	let { game, showCursor }: { game: Game; showCursor: boolean } = $props();
+
+	/** How far a hovered or carried dot stands out, as a fraction of the radius. */
+	const LIFT = 0.06;
+	/** Time constant of a glide, in seconds: dots are about there after three of these. */
+	const GLIDE = 0.04;
+	const UNFOLD_DELAY = 150;
+	const UNFOLD_TIME = 1200;
+	/** How near a press has to be to a dot to pick it up, in radii. */
+	const GRAB = 0.22;
+	const TAU = 2 * Math.PI;
+
+	let svg: SVGSVGElement;
+	let pos = $state.raw<Point[]>([]);
+	/** Eased from 0 on the circle to 1 fully unfolded. */
+	let unfold = $state(0);
+	let hovered = $state<number | undefined>(undefined);
+	/** The dot being dragged, and the angle of the pointer dragging it. */
+	let drag = $state<{ v: number; angle: number } | undefined>(undefined);
+
+	// drawn angle and radius per vertex, eased toward where each belongs
+	let angle: number[] = [];
+	let radius: number[] = [];
+	let shown: Game | undefined;
+	let raf = 0;
+	let last = 0;
+
+	const ease = (t: number) => t * t * (3 - 2 * t);
+	const wrap = (a: number) => ((((a + Math.PI) % TAU) + TAU) % TAU) - Math.PI;
+	const slotAngle = (slot: number) => (TAU * slot) / game.dots;
+
+	function lifted(v: number): boolean {
+		if (game.solved) return false;
+		if (drag) return drag.v === v;
+		return hovered === v || (showCursor && game.slots[v] === game.cursor);
+	}
+
+	function place(): void {
+		pos = angle.map((a, v) => {
+			const on = { x: Math.cos(a) * radius[v], y: Math.sin(a) * radius[v] };
+			const to = game.unfolded[v];
+			return unfold > 0 && to ? { x: on.x + (to.x - on.x) * unfold, y: on.y + (to.y - on.y) * unfold } : on;
+		});
+	}
+
+	function frame(now: number): void {
+		const dt = last ? Math.min((now - last) / 1000, 0.1) : 1 / 60;
+		last = now;
+		const k = 1 - Math.exp(-dt / GLIDE);
+		let moving = false;
+		for (let v = 0; v < game.dots; v++) {
+			const toAngle = drag?.v === v ? drag.angle : slotAngle(game.slots[v]);
+			const toRadius = lifted(v) ? 1 + LIFT : 1;
+			const da = wrap(toAngle - angle[v]);
+			const dr = toRadius - radius[v];
+			if (drag?.v === v) {
+				// under the finger, not behind it
+				angle[v] = toAngle;
+				radius[v] += dr * k;
+				moving ||= Math.abs(dr) > 1e-4;
+			} else if (Math.abs(da) > 1e-4 || Math.abs(dr) > 1e-4) {
+				angle[v] += da * k;
+				radius[v] += dr * k;
+				moving = true;
+			} else {
+				angle[v] = toAngle;
+				radius[v] = toRadius;
+			}
+		}
+		const t = game.solvedAt === undefined ? 0 : Math.min(1, Math.max(0, (now - game.solvedAt - UNFOLD_DELAY) / UNFOLD_TIME));
+		unfold = ease(t);
+		place();
+		raf = moving || (game.solvedAt !== undefined && t < 1) ? requestAnimationFrame(frame) : 0;
+	}
+
+	function kick(): void {
+		if (!raf) {
+			last = 0;
+			raf = requestAnimationFrame(frame);
+		}
+	}
+
+	// a new level starts in place, with nothing gliding in
+	$effect.pre(() => {
+		if (shown === game) return;
+		shown = game;
+		angle = game.slots.map(slotAngle);
+		radius = angle.map(() => 1);
+		hovered = drag = undefined;
+		unfold = 0;
+		place();
+	});
+
+	// anything that moves a dot starts the animation, which stops itself once all is still
+	$effect(() => {
+		void [game, game.slots, game.cursor, game.solvedAt, hovered, drag, showCursor];
+		kick();
+	});
+
+	$effect(() => () => cancelAnimationFrame(raf));
+
+	// --- input
+
+	function boardPoint(e: PointerEvent): Point {
+		const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(svg.getScreenCTM()!.inverse());
+		return { x: p.x, y: -p.y };
+	}
+
+	function nearest(p: Point): number | undefined {
+		let best: number | undefined;
+		let bestDist = GRAB;
+		pos.forEach((q, v) => {
+			const d = Math.hypot(q.x - p.x, q.y - p.y);
+			if (d < bestDist) [best, bestDist] = [v, d];
+		});
+		return best;
+	}
+
+	function onpointerdown(e: PointerEvent): void {
+		if (game.solved || drag || e.button > 0) return;
+		const p = boardPoint(e);
+		const v = nearest(p);
+		if (v === undefined) return;
+		e.preventDefault();
+		svg.setPointerCapture(e.pointerId);
+		if (game.carrying) game.putBack();
+		game.pickUp(v);
+		drag = { v, angle: Math.atan2(p.y, p.x) };
+	}
+
+	function onpointermove(e: PointerEvent): void {
+		const p = boardPoint(e);
+		if (!drag) {
+			if (e.pointerType === 'mouse') hovered = game.solved ? undefined : nearest(p);
+			return;
+		}
+		const a = Math.atan2(p.y, p.x);
+		drag = { v: drag.v, angle: a };
+		const slot = Math.round((((a % TAU) + TAU) % TAU) / (TAU / game.dots)) % game.dots;
+		if (slot !== game.slots[drag.v]) game.carryTo(slot);
+	}
+
+	function onpointerup(): void {
+		if (!drag) return;
+		drag = undefined;
+		game.setDown();
+	}
+
+	function onpointercancel(): void {
+		if (!drag) return;
+		drag = undefined;
+		game.putBack();
+	}
+
+	// --- drawing
+
+	const creasesOn = $derived(game.flaps.map((_, k) => game.edges.filter((e) => e.topFlap === k)));
+
+	/** Where two segments meet, if they do. */
+	function meet(a: Point, b: Point, c: Point, d: Point): Point | undefined {
+		const r = { x: b.x - a.x, y: b.y - a.y };
+		const s = { x: d.x - c.x, y: d.y - c.y };
+		const denom = r.x * s.y - r.y * s.x;
+		if (denom === 0) return;
+		const t = ((c.x - a.x) * s.y - (c.y - a.y) * s.x) / denom;
+		const u = ((c.x - a.x) * r.y - (c.y - a.y) * r.x) / denom;
+		if (t < 0 || t > 1 || u < 0 || u > 1) return;
+		return { x: a.x + r.x * t, y: a.y + r.y * t };
+	}
+
+	/** Each crossing where its creases are drawn now, under the lower of their two flaps. */
+	const marks = $derived(
+		pos.length !== game.dots
+			? []
+			: game.crossingPairs.flatMap(([i, j]) => {
+					const [e, f] = [game.edges[i], game.edges[j]];
+					const at = meet(pos[e.a], pos[e.b], pos[f.a], pos[f.b]);
+					return at ? [{ ...at, layer: Math.min(e.topFlap, f.topFlap) }] : [];
+				})
+	);
+
+	const pt = (p: Point) => `${p.x},${-p.y}`;
+</script>
+
+<svg
+	bind:this={svg}
+	class="board"
+	class:solved={game.solved}
+	class:dragging={drag !== undefined}
+	viewBox="-1.25 -1.25 2.5 2.5"
+	role="application"
+	aria-label="Puzzle board: {game.crossings} crossings, {game.moves} moves"
+	{onpointerdown}
+	{onpointermove}
+	{onpointerup}
+	{onpointercancel}
+	onpointerleave={() => (hovered = undefined)}
+>
+	<defs>
+		<filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+			<feDropShadow dx="0.012" dy="0.018" stdDeviation="0.012" flood-color="var(--shadow)" />
+		</filter>
+	</defs>
+
+	<circle class="ring" r="1" style:opacity={1 - unfold} />
+
+	{#if pos.length === game.dots}
+		{#each game.flaps as flap, k (k)}
+			<polygon class="flap" points={flap.map((v) => pt(pos[v])).join(' ')} filter="url(#shadow)" />
+			{#each creasesOn[k] as e (e.a * 1000 + e.b)}
+				<line
+					class="crease"
+					class:fold={e.shared}
+					x1={pos[e.a].x}
+					y1={-pos[e.a].y}
+					x2={pos[e.b].x}
+					y2={-pos[e.b].y}
+					style:opacity={e.shared ? 1 - unfold : 1}
+				/>
+			{/each}
+			{#each marks.filter((m) => m.layer === k) as m, i (i)}
+				<circle class="cross" cx={m.x} cy={-m.y} r="0.03" />
+			{/each}
+		{/each}
+
+		{#if !game.solved}
+			{#each pos as p, v (v)}
+				<circle class="dot" class:lifted={lifted(v)} class:carried={game.carried === v} cx={p.x} cy={-p.y} r={lifted(v) ? 0.045 : 0.028} />
+			{/each}
+			{#if showCursor && !game.carrying}
+				{@const p = pos[game.vertexAt(game.cursor)]}
+				<circle class="cursor" cx={p.x} cy={-p.y} r="0.075" />
+			{/if}
+		{/if}
+	{/if}
+</svg>
+
+<style>
+	.board {
+		display: block;
+		width: 100%;
+		height: auto;
+		aspect-ratio: 1;
+		touch-action: none;
+		user-select: none;
+		-webkit-user-select: none;
+	}
+	.dragging {
+		cursor: grabbing;
+	}
+	.ring {
+		fill: none;
+		stroke: var(--ring);
+		stroke-width: 0.006;
+	}
+	.flap {
+		fill: var(--paper);
+		transition: fill 0.6s;
+	}
+	.solved .flap {
+		fill: var(--paper-solved);
+	}
+	.crease {
+		stroke: var(--ink);
+		stroke-width: 0.012;
+		stroke-linecap: round;
+	}
+	.crease.fold {
+		stroke: var(--fold);
+		stroke-width: 0.008;
+		stroke-dasharray: 0.03 0.022;
+	}
+	.cross {
+		fill: var(--cross);
+		stroke: var(--paper);
+		stroke-width: 0.01;
+	}
+	.dot {
+		fill: var(--dot);
+		/* a ring of background keeps a dot clear on paper and off it, in either theme */
+		stroke: var(--bg);
+		stroke-width: 0.01;
+		cursor: grab;
+	}
+	.dot.lifted {
+		fill: var(--accent);
+	}
+	.dot.carried {
+		fill: var(--carry);
+	}
+	.cursor {
+		fill: none;
+		stroke: var(--accent);
+		stroke-width: 0.01;
+	}
+</style>

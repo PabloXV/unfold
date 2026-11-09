@@ -155,13 +155,14 @@ impl Puzzle {
         format!("{}/{}", self.seed, self.level)
     }
 
-    pub fn crossing_pairs(&self, slot_of: &[usize]) -> Vec<(&Edge, &Edge)> {
+    /// Indices into `edges` of each pair that cross, lower first.
+    pub fn crossing_pairs(&self, slot_of: &[usize]) -> Vec<(usize, usize)> {
         let slots = |e: &Edge| (slot_of[e.a], slot_of[e.b]);
         let mut pairs = Vec::new();
         for (i, e) in self.edges.iter().enumerate() {
-            for f in &self.edges[i + 1..] {
+            for (j, f) in self.edges.iter().enumerate().skip(i + 1) {
                 if chords_cross(slots(e), slots(f)) {
-                    pairs.push((e, f));
+                    pairs.push((i, j));
                 }
             }
         }

@@ -217,11 +217,13 @@ impl Game {
     /// Only the crossings not hidden under a higher flap.
     fn visible_crossings(&self) -> Vec<Point> {
         let flaps = self.flap_pos();
+        let edges = &self.attempt.puzzle.edges;
         self.attempt
             .puzzle
             .crossing_pairs(self.slot_of())
             .into_iter()
-            .filter_map(|(e, f)| {
+            .filter_map(|(i, j)| {
+                let (e, f) = (&edges[i], &edges[j]);
                 let pt = intersection(self.edge_pos(e), self.edge_pos(f))?;
                 let hidden = flaps[e.top_flap.min(f.top_flap) + 1..].iter().any(|t| inside(t, pt));
                 (!hidden).then_some(pt)
