@@ -10,10 +10,12 @@ cd "$(dirname "$0")/.."
 
 WASM_BINDGEN=0.2.130 # must match wasm-bindgen in wasm/Cargo.toml
 BINARYEN=133
+PNPM=12.18.0 # must match packageManager in package.json
 
 tools="${TMPDIR:-/tmp}/unfold-tools"
 mkdir -p "$tools/bin"
-export PATH="$tools/bin:$HOME/.cargo/bin:$PATH"
+# ours first, ahead of any older pnpm the machine came with
+export PATH="$tools/bin:$tools/node_modules/.bin:$HOME/.cargo/bin:$PATH"
 
 if ! command -v rustup >/dev/null 2>&1; then
 	curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
@@ -31,7 +33,10 @@ if ! command -v wasm-opt >/dev/null 2>&1; then
 		tar xz -C "$tools/bin" --strip-components=2 "binaryen-version_$BINARYEN/bin/wasm-opt"
 fi
 
-command -v pnpm >/dev/null 2>&1 || npm install --global pnpm
+if [ "$(pnpm --version 2>/dev/null)" != "$PNPM" ]; then
+	npm install --silent --prefix "$tools" "pnpm@$PNPM"
+fi
+echo "using pnpm $(pnpm --version), $(wasm-bindgen --version), $(wasm-opt --version)"
 pnpm install --frozen-lockfile
 pnpm build
 node scripts/check-wasm.js
