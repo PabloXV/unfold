@@ -15,7 +15,7 @@
 	}: {
 		game: Game;
 		showCursor: boolean;
-		/** Per flap, in `game.flaps` order: what the paper turns once solved. Plain paper without. */
+		/** Per flap, in `game.flaps` order: the paper's color. Plain paper without. */
 		colors?: string[];
 	} = $props();
 
@@ -234,7 +234,7 @@
 				class="flap"
 				points={flap.map((v) => pt(pos[v])).join(' ')}
 				filter="url(#shadow)"
-				style:fill={game.solved && colors ? colors[k] : undefined}
+				style:fill={colors?.[k]}
 			/>
 			{#each creasesOn[k] as e (e.a * 1000 + e.b)}
 				<!-- on a colored sheet the outline fades too, leaving the picture -->
