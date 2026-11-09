@@ -1,0 +1,12 @@
+// Cloudflare deploy config: the site is static files only, served straight from build/, with no
+// server code. Having this file also stops `wrangler deploy` from trying to set the project up
+// for SvelteKit's Cloudflare adapter, which a static site doesn't need.
+{
+	"$schema": "https://unpkg.com/wrangler/config-schema.json",
+	// must match the Worker's name in the Cloudflare dashboard
+	"name": "unfold",
+	"compatibility_date": "2026-11-01",
+	"assets": {
+		"directory": "./build"
+	}
+}
