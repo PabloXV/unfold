@@ -205,6 +205,13 @@
 
 	const pt = (p: Point) => `${p.x},${-p.y}`;
 
+	/** Plain paper, a little deeper the lower a flap lies, as stacked sheets look. */
+	function paperShade(k: number): string {
+		if (game.solved) return 'var(--paper-solved)';
+		const depth = game.flaps.length > 1 ? 1 - k / (game.flaps.length - 1) : 0;
+		return `color-mix(in oklab, var(--paper-deep) ${Math.round(depth * 100)}%, var(--paper))`;
+	}
+
 	/**
 	 * How a dot shows: idle dots ripple outward to say they can be grabbed; once one is held the
 	 * others go still and it holds a pulsing ring; a hovered dot, or the keyboard's, holds a
@@ -234,10 +241,11 @@
 >
 	<defs>
 		<!-- the shadow alone, of everything drawn into it -->
-		<filter id="shadow" x="-15%" y="-15%" width="130%" height="130%">
-			<feGaussianBlur in="SourceAlpha" stdDeviation="0.014" />
-			<feOffset dx="0.012" dy="0.02" result="blur" />
-			<feFlood class="shadow-color" />
+		<filter id="shadow" x="-25%" y="-25%" width="150%" height="150%">
+			<!-- broad and soft: a tight one reads as a dark outline, not paper lifted off the table -->
+			<feGaussianBlur in="SourceAlpha" stdDeviation="0.04" />
+			<feOffset dx="0.02" dy="0.045" result="blur" />
+			<feFlood class="shadow-color" flood-color="rgb(60 45 25 / 0.2)" />
 			<feComposite in2="blur" operator="in" />
 		</filter>
 	</defs>
@@ -252,7 +260,7 @@
 		</g>
 
 		{#each game.flaps as flap, k (k)}
-			<polygon class="flap" points={flap.map((v) => pt(pos[v])).join(' ')} style:fill={colors?.[k]} />
+			<polygon class="flap" points={flap.map((v) => pt(pos[v])).join(' ')} style:fill={colors?.[k] ?? paperShade(k)} />
 			{#each creasesOn[k] as e (e.a * 1000 + e.b)}
 				<!-- on a colored sheet the outline fades too, leaving the picture -->
 				<line
@@ -310,15 +318,17 @@
 	.solved .flap {
 		fill: var(--paper-solved);
 	}
+	/* paper edges, in screen pixels so they stay fine at any size */
 	.crease {
-		stroke: var(--ink);
-		stroke-width: 0.012;
+		stroke: var(--edge);
+		stroke-width: 1.5px;
 		stroke-linecap: round;
+		vector-effect: non-scaling-stroke;
 	}
 	.crease.fold {
 		stroke: var(--fold);
-		stroke-width: 0.008;
-		stroke-dasharray: 0.03 0.022;
+		stroke-width: 1px;
+		stroke-dasharray: 4 3;
 	}
 	/* rings keep the same line width and dashes at any size, scaled from their own center */
 	.ripple,
