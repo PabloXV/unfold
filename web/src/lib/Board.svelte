@@ -178,9 +178,27 @@
 
 	// --- drawing
 
-	/** Folds between two flaps, by the flap they're drawn on. Outline edges aren't drawn: the
-	 * paper's shade and shadows show them. */
-	const foldsOn = $derived(game.flaps.map((_, k) => game.edges.filter((e) => e.shared && e.topFlap === k)));
+	/** Half the width of the soft shade along a fold, in radii. */
+	const CREASE = 0.05;
+
+	/** Each fold between two flaps: its edge, an id, and the two flaps meeting along it. Outline
+	 * edges aren't drawn at all: the paper's shade and shadows show them. */
+	const folds = $derived(
+		game.edges.flatMap((e, id) =>
+			e.shared ? [{ e, id, flaps: game.flaps.flatMap((f, k) => (f.includes(e.a) && f.includes(e.b) ? [k] : [])) }] : []
+		)
+	);
+	/** Folds by the flap they're drawn on. */
+	const foldsOn = $derived(game.flaps.map((_, k) => folds.filter((f) => f.e.topFlap === k)));
+
+	/** Across a fold from one side of its shade to the other, in board coordinates. */
+	function across(e: { a: number; b: number }): { x1: number; y1: number; x2: number; y2: number } {
+		const [p, q] = [pos[e.a], pos[e.b]];
+		const len = Math.hypot(q.x - p.x, q.y - p.y) || 1;
+		const [nx, ny] = [-(q.y - p.y) / len, (q.x - p.x) / len];
+		const [mx, my] = [(p.x + q.x) / 2, (p.y + q.y) / 2];
+		return { x1: mx - nx * CREASE, y1: -(my - ny * CREASE), x2: mx + nx * CREASE, y2: -(my + ny * CREASE) };
+	}
 
 	const flapPoints = $derived(pos.length === game.dots ? game.flaps.map((f) => f.map((v) => pt(pos[v])).join(' ')) : []);
 
@@ -267,6 +285,17 @@
 			{#each flapPoints as points, k (k)}
 				<clipPath id="flap-{k}"><polygon {points} /></clipPath>
 			{/each}
+			<!-- a crease: shade fading out to both sides of the fold, kept on its two flaps -->
+			{#each folds as f (f.id)}
+				<linearGradient id="crease-{f.id}" gradientUnits="userSpaceOnUse" {...across(f.e)}>
+					<stop offset="0" class="crease-stop" stop-opacity="0" />
+					<stop offset="0.5" class="crease-stop" />
+					<stop offset="1" class="crease-stop" stop-opacity="0" />
+				</linearGradient>
+				<clipPath id="crease-clip-{f.id}">
+					{#each f.flaps as k (k)}<polygon points={flapPoints[k]} />{/each}
+				</clipPath>
+			{/each}
 		{/if}
 	</defs>
 
@@ -289,8 +318,17 @@
 					</g>
 				</g>
 			{/if}
-			{#each foldsOn[k] as e (e.a * 1000 + e.b)}
-				<line class="fold" x1={pos[e.a].x} y1={-pos[e.a].y} x2={pos[e.b].x} y2={-pos[e.b].y} style:opacity={1 - unfold} />
+			{#each foldsOn[k] as f (f.id)}
+				<line
+					x1={pos[f.e.a].x}
+					y1={-pos[f.e.a].y}
+					x2={pos[f.e.b].x}
+					y2={-pos[f.e.b].y}
+					stroke="url(#crease-{f.id})"
+					stroke-width={2 * CREASE}
+					clip-path="url(#crease-clip-{f.id})"
+					style:opacity={1 - unfold}
+				/>
 			{/each}
 			{#each marks.filter((m) => m.layer === k) as m, i (i)}
 				<g transform="translate({m.x} {-m.y})"><circle class="ripple cross" r="0.08" /></g>
@@ -337,12 +375,8 @@
 	.solved .flap {
 		fill: var(--paper-solved);
 	}
-	/* in screen pixels, so folds stay fine at any size */
-	.fold {
-		stroke: var(--fold);
-		stroke-width: 1px;
-		stroke-dasharray: 4 3;
-		vector-effect: non-scaling-stroke;
+	.crease-stop {
+		stop-color: var(--crease);
 	}
 	/* rings keep the same line width and dashes at any size, scaled from their own center */
 	.ripple,
