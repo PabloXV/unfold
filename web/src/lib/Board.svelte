@@ -204,6 +204,18 @@
 	);
 
 	const pt = (p: Point) => `${p.x},${-p.y}`;
+
+	/**
+	 * How a dot shows: idle dots ripple outward to say they can be grabbed; once one is held the
+	 * others go still and it holds a pulsing ring; a hovered dot, or the keyboard's, holds a
+	 * steady one.
+	 */
+	function dotState(v: number): 'ripple' | 'held' | 'focus' | 'still' {
+		if (game.carried === v) return 'held';
+		if (game.carrying || drag) return 'still';
+		if (hovered === v || (showCursor && game.slots[v] === game.cursor)) return 'focus';
+		return 'ripple';
+	}
 </script>
 
 <svg
@@ -221,21 +233,26 @@
 	onpointerleave={() => (hovered = undefined)}
 >
 	<defs>
-		<filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-			<feDropShadow dx="0.012" dy="0.018" stdDeviation="0.012" flood-color="var(--shadow)" />
+		<!-- the shadow alone, of everything drawn into it -->
+		<filter id="shadow" x="-15%" y="-15%" width="130%" height="130%">
+			<feGaussianBlur in="SourceAlpha" stdDeviation="0.014" />
+			<feOffset dx="0.012" dy="0.02" result="blur" />
+			<feFlood class="shadow-color" />
+			<feComposite in2="blur" operator="in" />
 		</filter>
 	</defs>
 
-	<circle class="ring" r="1" style:opacity={1 - unfold} />
-
 	{#if pos.length === game.dots}
+		<!-- one shadow for the whole sheet, so it's the same shade everywhere instead of darker
+			 wherever flaps overlap -->
+		<g filter="url(#shadow)">
+			{#each game.flaps as flap, k (k)}
+				<polygon points={flap.map((v) => pt(pos[v])).join(' ')} />
+			{/each}
+		</g>
+
 		{#each game.flaps as flap, k (k)}
-			<polygon
-				class="flap"
-				points={flap.map((v) => pt(pos[v])).join(' ')}
-				filter="url(#shadow)"
-				style:fill={colors?.[k]}
-			/>
+			<polygon class="flap" points={flap.map((v) => pt(pos[v])).join(' ')} style:fill={colors?.[k]} />
 			{#each creasesOn[k] as e (e.a * 1000 + e.b)}
 				<!-- on a colored sheet the outline fades too, leaving the picture -->
 				<line
@@ -249,18 +266,23 @@
 				/>
 			{/each}
 			{#each marks.filter((m) => m.layer === k) as m, i (i)}
-				<circle class="cross" cx={m.x} cy={-m.y} r="0.03" />
+				<g transform="translate({m.x} {-m.y})"><circle class="ripple cross" r="0.08" /></g>
 			{/each}
 		{/each}
 
 		{#if !game.solved}
 			{#each pos as p, v (v)}
-				<circle class="dot" class:lifted={lifted(v)} class:carried={game.carried === v} cx={p.x} cy={-p.y} r={lifted(v) ? 0.045 : 0.028} />
+				{@const state = dotState(v)}
+				<g transform="translate({p.x} {-p.y})">
+					{#if state === 'ripple'}
+						<circle class="ripple" r="0.11" />
+					{:else if state === 'held'}
+						<circle class="held" r="0.085" />
+					{:else if state === 'focus'}
+						<circle class="focus" r="0.085" />
+					{/if}
+				</g>
 			{/each}
-			{#if showCursor && !game.carrying}
-				{@const p = pos[game.vertexAt(game.cursor)]}
-				<circle class="cursor" cx={p.x} cy={-p.y} r="0.075" />
-			{/if}
 		{/if}
 	{/if}
 </svg>
@@ -278,10 +300,8 @@
 	.dragging {
 		cursor: grabbing;
 	}
-	.ring {
-		fill: none;
-		stroke: var(--ring);
-		stroke-width: 0.006;
+	.shadow-color {
+		flood-color: var(--shadow);
 	}
 	.flap {
 		fill: var(--paper);
@@ -300,27 +320,65 @@
 		stroke-width: 0.008;
 		stroke-dasharray: 0.03 0.022;
 	}
-	.cross {
-		fill: var(--cross);
-		stroke: var(--paper);
-		stroke-width: 0.01;
-	}
-	.dot {
-		fill: var(--dot);
-		/* a ring of background keeps a dot clear on paper and off it, in either theme */
-		stroke: var(--bg);
-		stroke-width: 0.01;
-		cursor: grab;
-	}
-	.dot.lifted {
-		fill: var(--accent);
-	}
-	.dot.carried {
-		fill: var(--carry);
-	}
-	.cursor {
+	/* rings keep the same line width and dashes at any size, scaled from their own center */
+	.ripple,
+	.held,
+	.focus {
 		fill: none;
+		vector-effect: non-scaling-stroke;
+		stroke-dasharray: 3 3;
+		transform-box: fill-box;
+		transform-origin: center;
+	}
+	.ripple {
+		stroke: var(--dot);
+		stroke-width: 2px;
+		animation: ripple 1.5s ease-out infinite;
+	}
+	.ripple.cross {
+		stroke: var(--cross);
+		stroke-width: 2.5px;
+	}
+	.held {
+		stroke: var(--carry);
+		stroke-width: 2.5px;
+		animation: held 1.2s ease-in-out infinite;
+	}
+	.focus {
 		stroke: var(--accent);
-		stroke-width: 0.01;
+		stroke-width: 2px;
+	}
+	/* bright for most of the way out, fading at the end */
+	@keyframes ripple {
+		0% {
+			transform: scale(0.2);
+			opacity: 1;
+		}
+		55% {
+			opacity: 0.85;
+		}
+		100% {
+			transform: scale(1);
+			opacity: 0;
+		}
+	}
+	@keyframes held {
+		0%,
+		100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.35;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.ripple,
+		.held {
+			animation: none;
+		}
+		.ripple {
+			transform: scale(0.55);
+			opacity: 0.7;
+		}
 	}
 </style>
