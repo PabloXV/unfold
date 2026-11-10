@@ -28,6 +28,8 @@
 		--ink: #2f2b26;
 		--dot: #2f2b26;
 		--shadow: rgb(60 45 25 / 0.26);
+		--cast: rgb(60 45 25);
+		--cast-step: 0.032;
 		--cross: #d9543f;
 		--accent: #2f7d6d;
 		--carry: #c8862a;
@@ -47,6 +49,8 @@
 			--ink: #2a2622;
 			--dot: #d8d0c2;
 			--shadow: rgb(0 0 0 / 0.5);
+			--cast: rgb(0 0 0);
+			--cast-step: 0.081;
 			--cross: #e0604a;
 			--accent: #5fbfa8;
 			--carry: #e0a345;

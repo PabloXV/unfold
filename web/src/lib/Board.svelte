@@ -146,7 +146,7 @@
 		const v = nearest(p);
 		if (v === undefined) return;
 		e.preventDefault();
-		svg.setPointerCapture(e.pointerId);
+		(e.currentTarget as Element).setPointerCapture(e.pointerId);
 		if (game.carrying) game.putBack();
 		game.pickUp(v);
 		drag = { v, angle: Math.atan2(p.y, p.x) };
@@ -178,7 +178,34 @@
 
 	// --- drawing
 
-	const flapPoints = $derived(pos.length === game.dots ? game.flaps.map((f) => f.map((v) => pt(pos[v])).join(' ')) : []);
+	/**
+	 * Each flap as a closed path, always wound the same way round, so that many of them filled as
+	 * one path cover their union instead of cancelling out where they overlap.
+	 */
+	const flapPaths = $derived(
+		pos.length !== game.dots
+			? []
+			: game.flaps.map((f) => {
+					let [a, b, c] = f.map((v) => ({ x: pos[v].x, y: -pos[v].y }));
+					if ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x) < 0) [b, c] = [c, b];
+					return `M${a.x} ${a.y}L${b.x} ${b.y}L${c.x} ${c.y}Z`;
+				})
+	);
+
+	/** Per flap, every flap above it as one path: the shape of the shadow cast onto it. */
+	const above = $derived.by(() => {
+		const out: string[] = new Array(flapPaths.length).fill('');
+		for (let k = flapPaths.length - 2; k >= 0; k--) out[k] = out[k + 1] + flapPaths[k + 1];
+		return out;
+	});
+
+	/**
+	 * A shadow without blur filters, which Safari draws slowly: the casting shape eight times over,
+	 * each very faint and a little further off, layers into a smooth fade across about the reach
+	 * of the blur it replaces. Each copy is one path, so overlapping casters never shade darker
+	 * than one.
+	 */
+	const CAST_STEPS = Array.from({ length: 8 }, (_, i) => ({ step: i, x: 0.017 * ((i + 1) / 8), y: 0.036 * ((i + 1) / 8) }));
 
 	/** Where two segments meet, if they do. */
 	function meet(a: Point, b: Point, c: Point, d: Point): Point | undefined {
@@ -192,18 +219,27 @@
 		return { x: a.x + r.x * t, y: a.y + r.y * t };
 	}
 
-	/** Each crossing where its creases are drawn now, under the lower of their two flaps. */
+	/** Strictly inside a triangle, so points on its edges don't count. */
+	function inside([a, b, c]: Point[], p: Point): boolean {
+		const side = (u: Point, v: Point) => (v.x - u.x) * (p.y - u.y) - (v.y - u.y) * (p.x - u.x);
+		const [d1, d2, d3] = [side(a, b), side(b, c), side(c, a)];
+		const eps = 1e-9;
+		return (d1 > eps && d2 > eps && d3 > eps) || (d1 < -eps && d2 < -eps && d3 < -eps);
+	}
+
+	/** Each crossing where its creases are drawn now, unless a higher flap covers it. */
 	const marks = $derived(
 		pos.length !== game.dots
 			? []
 			: game.crossingPairs.flatMap(([i, j]) => {
 					const [e, f] = [game.edges[i], game.edges[j]];
 					const at = meet(pos[e.a], pos[e.b], pos[f.a], pos[f.b]);
-					return at ? [{ ...at, layer: Math.min(e.topFlap, f.topFlap) }] : [];
+					if (!at) return [];
+					const covered = game.flaps.slice(Math.min(e.topFlap, f.topFlap) + 1).some((t) => inside(t.map((v) => pos[v]), at));
+					return covered ? [] : [at];
 				})
 	);
 
-	const pt = (p: Point) => `${p.x},${-p.y}`;
 
 	/** Plain paper, a little deeper the lower a flap lies, as stacked sheets look. */
 	function paperShade(k: number): string {
@@ -225,12 +261,10 @@
 	}
 </script>
 
-<svg
-	bind:this={svg}
+<div
 	class="board"
 	class:solved={game.solved}
 	class:dragging={drag !== undefined}
-	viewBox="-1.25 -1.25 2.5 2.5"
 	role="application"
 	aria-label="Puzzle board: {game.crossings} crossings, {game.moves} moves"
 	{onpointerdown}
@@ -239,58 +273,39 @@
 	{onpointercancel}
 	onpointerleave={() => (hovered = undefined)}
 >
-	<!--
-		Shadows are drawn from the outline of everything casting them at once, never one flap at a
-		time: where two flaps would both shade the same spot their shapes merge first, so every
-		shadow is the same shade instead of darker wherever shadows overlap.
-	-->
-	<defs>
-		<!-- the sheet onto the table: broad and soft -->
-		<filter id="shadow" x="-25%" y="-25%" width="150%" height="150%">
-			<feGaussianBlur in="SourceAlpha" stdDeviation="0.035" />
-			<feOffset dx="0.02" dy="0.04" result="blur" />
-			<feFlood class="shadow-color" flood-color="rgb(60 45 25 / 0.22)" />
-			<feComposite in2="blur" operator="in" />
-		</filter>
-		<!-- flaps onto the flaps under them, which lie closer: tighter -->
-		<filter id="cast" x="-25%" y="-25%" width="150%" height="150%">
-			<feGaussianBlur in="SourceAlpha" stdDeviation="0.018" />
-			<feOffset dx="0.01" dy="0.022" result="blur" />
-			<feFlood class="shadow-color" flood-color="rgb(60 45 25 / 0.22)" />
-			<feComposite in2="blur" operator="in" />
-		</filter>
+	<!-- the paper, with its shadow on the table drawn by CSS, which Safari does quickly -->
+	<svg class="paper" viewBox="-1.25 -1.25 2.5 2.5" aria-hidden="true">
 		{#if pos.length === game.dots}
-			{#each flapPoints as points, k (k)}
-				<clipPath id="flap-{k}"><polygon {points} /></clipPath>
-			{/each}
-		{/if}
-	</defs>
-
-	{#if pos.length === game.dots}
-		<g filter="url(#shadow)">
-			{#each flapPoints as points, k (k)}
-				<polygon {points} />
-			{/each}
-		</g>
-
-		{#each game.flaps as _, k (k)}
-			<polygon class="flap" points={flapPoints[k]} style:fill={colors?.[k] ?? paperShade(k)} />
-			<!-- everything above this flap, as one shape, shading only this flap -->
-			{#if k < game.flaps.length - 1}
-				<g clip-path="url(#flap-{k})">
-					<g filter="url(#cast)">
-						{#each flapPoints.slice(k + 1) as points, j (j)}
-							<polygon {points} />
+			<defs>
+				{#each flapPaths as d, k (k)}
+					<clipPath id="flap-{k}"><path {d} /></clipPath>
+					<!-- defined once and reused by every step, so moving dots rewrites one shape per flap -->
+					{#if above[k]}<path id="above-{k}" d={above[k]} />{/if}
+				{/each}
+			</defs>
+			{#each game.flaps as _, k (k)}
+				<path class="flap" d={flapPaths[k]} style:fill={colors?.[k] ?? paperShade(k)} />
+				<!-- the shadow everything above this flap casts on it, only on it -->
+				{#if above[k]}
+					<g clip-path="url(#flap-{k})">
+						{#each CAST_STEPS as s (s.step)}
+							<use class="cast" href="#above-{k}" transform="translate({s.x} {s.y})" />
 						{/each}
 					</g>
-				</g>
-			{/if}
-			{#each marks.filter((m) => m.layer === k) as m, i (i)}
-				<g transform="translate({m.x} {-m.y})"><circle class="ripple cross" r="0.08" /></g>
+				{/if}
 			{/each}
-		{/each}
+		{/if}
+	</svg>
 
-		{#if !game.solved}
+	<!--
+		Everything that animates, on its own layer above the paper, so the paper and its shadows
+		are only redrawn when the paper moves.
+	-->
+	<svg bind:this={svg} class="dots" viewBox="-1.25 -1.25 2.5 2.5" aria-hidden="true">
+		{#each marks as m, i (i)}
+			<g transform="translate({m.x} {-m.y})"><circle class="ripple cross" r="0.08" /></g>
+		{/each}
+		{#if pos.length === game.dots && !game.solved}
 			{#each pos as p, v (v)}
 				{@const state = dotState(v)}
 				<g transform="translate({p.x} {-p.y})">
@@ -304,24 +319,39 @@
 				</g>
 			{/each}
 		{/if}
-	{/if}
-</svg>
+	</svg>
+</div>
 
 <style>
 	.board {
-		display: block;
+		position: relative;
 		width: 100%;
-		height: auto;
 		aspect-ratio: 1;
 		touch-action: none;
 		user-select: none;
 		-webkit-user-select: none;
+		/* lets the table shadow scale with the board */
+		container-type: inline-size;
+	}
+	.board svg {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		overflow: visible;
+		/* each layer kept apart by the browser, so the always-animating rings don't make it
+		   repaint the paper under them */
+		will-change: transform;
+	}
+	.paper {
+		filter: drop-shadow(0.8cqw 1.6cqw 1.6cqw var(--shadow));
 	}
 	.dragging {
 		cursor: grabbing;
 	}
-	.shadow-color {
-		flood-color: var(--shadow);
+	.cast {
+		fill: var(--cast);
+		fill-opacity: var(--cast-step);
 	}
 	.flap {
 		fill: var(--paper);

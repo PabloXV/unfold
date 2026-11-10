@@ -99,8 +99,13 @@
 		const correct = name === shape.name;
 		guesses = [...guesses, { level, name, correct }];
 		text = '';
-		feedback = correct ? '' : `Not a ${name}.`;
+		feedback = correct ? '' : `Not ${article(name)} ${name}.`;
 		if (correct || level === LEVELS) markPlayed(shapeIndex);
+	}
+
+	/** "an elephant", "a fox". */
+	function article(name: string): string {
+		return /^[aeiou]/.test(name) ? 'an' : 'a';
 	}
 
 	function giveUp(): void {
@@ -160,7 +165,7 @@
 				<p>{game.crossings} {game.crossings === 1 ? 'crossing' : 'crossings'} · {game.moves} {game.moves === 1 ? 'move' : 'moves'}</p>
 				<p class="quiet">Untangle it to unfold the next clue.</p>
 			{:else if revealed}
-				<p class="answer"><span class="emoji">{shape.emoji}</span> It's a <strong>{shape.name}</strong>!</p>
+				<p class="answer"><span class="emoji">{shape.emoji}</span> It's {article(shape.name)} <strong>{shape.name}</strong>!</p>
 				<p class="quiet">
 					{#if gotItAt !== undefined}
 						You got it at level {gotItAt} of {LEVELS}.
