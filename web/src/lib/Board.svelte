@@ -178,7 +178,11 @@
 
 	// --- drawing
 
-	const creasesOn = $derived(game.flaps.map((_, k) => game.edges.filter((e) => e.topFlap === k)));
+	/** Folds between two flaps, by the flap they're drawn on. Outline edges aren't drawn: the
+	 * paper's shade and shadows show them. */
+	const foldsOn = $derived(game.flaps.map((_, k) => game.edges.filter((e) => e.shared && e.topFlap === k)));
+
+	const flapPoints = $derived(pos.length === game.dots ? game.flaps.map((f) => f.map((v) => pt(pos[v])).join(' ')) : []);
 
 	/** Where two segments meet, if they do. */
 	function meet(a: Point, b: Point, c: Point, d: Point): Point | undefined {
@@ -239,39 +243,54 @@
 	{onpointercancel}
 	onpointerleave={() => (hovered = undefined)}
 >
+	<!--
+		Shadows are drawn from the outline of everything casting them at once, never one flap at a
+		time: where two flaps would both shade the same spot their shapes merge first, so every
+		shadow is the same shade instead of darker wherever shadows overlap.
+	-->
 	<defs>
-		<!-- the shadow alone, of everything drawn into it -->
+		<!-- the sheet onto the table: broad and soft -->
 		<filter id="shadow" x="-25%" y="-25%" width="150%" height="150%">
-			<!-- broad and soft: a tight one reads as a dark outline, not paper lifted off the table -->
-			<feGaussianBlur in="SourceAlpha" stdDeviation="0.04" />
-			<feOffset dx="0.02" dy="0.045" result="blur" />
-			<feFlood class="shadow-color" flood-color="rgb(60 45 25 / 0.2)" />
+			<feGaussianBlur in="SourceAlpha" stdDeviation="0.035" />
+			<feOffset dx="0.02" dy="0.04" result="blur" />
+			<feFlood class="shadow-color" flood-color="rgb(60 45 25 / 0.22)" />
 			<feComposite in2="blur" operator="in" />
 		</filter>
+		<!-- flaps onto the flaps under them, which lie closer: tighter -->
+		<filter id="cast" x="-25%" y="-25%" width="150%" height="150%">
+			<feGaussianBlur in="SourceAlpha" stdDeviation="0.018" />
+			<feOffset dx="0.01" dy="0.022" result="blur" />
+			<feFlood class="shadow-color" flood-color="rgb(60 45 25 / 0.22)" />
+			<feComposite in2="blur" operator="in" />
+		</filter>
+		{#if pos.length === game.dots}
+			{#each flapPoints as points, k (k)}
+				<clipPath id="flap-{k}"><polygon {points} /></clipPath>
+			{/each}
+		{/if}
 	</defs>
 
 	{#if pos.length === game.dots}
-		<!-- one shadow for the whole sheet, so it's the same shade everywhere instead of darker
-			 wherever flaps overlap -->
 		<g filter="url(#shadow)">
-			{#each game.flaps as flap, k (k)}
-				<polygon points={flap.map((v) => pt(pos[v])).join(' ')} />
+			{#each flapPoints as points, k (k)}
+				<polygon {points} />
 			{/each}
 		</g>
 
-		{#each game.flaps as flap, k (k)}
-			<polygon class="flap" points={flap.map((v) => pt(pos[v])).join(' ')} style:fill={colors?.[k] ?? paperShade(k)} />
-			{#each creasesOn[k] as e (e.a * 1000 + e.b)}
-				<!-- on a colored sheet the outline fades too, leaving the picture -->
-				<line
-					class="crease"
-					class:fold={e.shared}
-					x1={pos[e.a].x}
-					y1={-pos[e.a].y}
-					x2={pos[e.b].x}
-					y2={-pos[e.b].y}
-					style:opacity={e.shared ? 1 - unfold : colors ? 1 - 0.85 * unfold : 1}
-				/>
+		{#each game.flaps as _, k (k)}
+			<polygon class="flap" points={flapPoints[k]} style:fill={colors?.[k] ?? paperShade(k)} />
+			<!-- everything above this flap, as one shape, shading only this flap -->
+			{#if k < game.flaps.length - 1}
+				<g clip-path="url(#flap-{k})">
+					<g filter="url(#cast)">
+						{#each flapPoints.slice(k + 1) as points, j (j)}
+							<polygon {points} />
+						{/each}
+					</g>
+				</g>
+			{/if}
+			{#each foldsOn[k] as e (e.a * 1000 + e.b)}
+				<line class="fold" x1={pos[e.a].x} y1={-pos[e.a].y} x2={pos[e.b].x} y2={-pos[e.b].y} style:opacity={1 - unfold} />
 			{/each}
 			{#each marks.filter((m) => m.layer === k) as m, i (i)}
 				<g transform="translate({m.x} {-m.y})"><circle class="ripple cross" r="0.08" /></g>
@@ -318,17 +337,12 @@
 	.solved .flap {
 		fill: var(--paper-solved);
 	}
-	/* paper edges, in screen pixels so they stay fine at any size */
-	.crease {
-		stroke: var(--edge);
-		stroke-width: 1.5px;
-		stroke-linecap: round;
-		vector-effect: non-scaling-stroke;
-	}
-	.crease.fold {
+	/* in screen pixels, so folds stay fine at any size */
+	.fold {
 		stroke: var(--fold);
 		stroke-width: 1px;
 		stroke-dasharray: 4 3;
+		vector-effect: non-scaling-stroke;
 	}
 	/* rings keep the same line width and dashes at any size, scaled from their own center */
 	.ripple,

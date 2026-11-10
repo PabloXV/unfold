@@ -24,7 +24,6 @@
 		--ring: #d4ccbe;
 		--paper: #fffdf8;
 		--paper-deep: #ebe4d6;
-		--edge: #a69a8a;
 		--paper-solved: #f1f7ec;
 		--ink: #2f2b26;
 		--dot: #2f2b26;
@@ -45,7 +44,6 @@
 			--ring: #3d3a34;
 			--paper: #ece6da;
 			--paper-deep: #cbc3b4;
-			--edge: #8d8375;
 			--paper-solved: #dfeedd;
 			--ink: #2a2622;
 			--dot: #d8d0c2;
