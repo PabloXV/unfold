@@ -27,7 +27,6 @@
 		--paper-solved: #f1f7ec;
 		--ink: #2f2b26;
 		--dot: #2f2b26;
-		--crease: rgb(80 60 35 / 0.22);
 		--shadow: rgb(60 45 25 / 0.26);
 		--cross: #d9543f;
 		--accent: #2f7d6d;
@@ -47,7 +46,6 @@
 			--paper-solved: #dfeedd;
 			--ink: #2a2622;
 			--dot: #d8d0c2;
-			--crease: rgb(40 30 20 / 0.35);
 			--shadow: rgb(0 0 0 / 0.5);
 			--cross: #e0604a;
 			--accent: #5fbfa8;
