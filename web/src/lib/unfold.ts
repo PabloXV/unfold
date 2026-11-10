@@ -1,9 +1,9 @@
 // The puzzle core (Rust, compiled to wasm), loaded once, plus the small helpers around it that
 // only the web needs.
-import init, { Attempt, dailySeed, parseCode } from './wasm/unfold_wasm.js';
+import init, { Attempt, dailyLevels, dailySeed, parseCode } from './wasm/unfold_wasm.js';
 import wasmUrl from './wasm/unfold_wasm_bg.wasm?url';
 
-export { Attempt, dailySeed, parseCode };
+export { Attempt, dailyLevels, dailySeed, parseCode };
 
 let ready: Promise<unknown> | undefined;
 

@@ -11,6 +11,9 @@ use std::ops::{Add, Mul, Sub};
 
 pub const LEVEL_1_DOTS: usize = 4;
 
+/// The levels of a seed that make up a day's puzzle, from 5 dots to 13.
+pub const DAILY_LEVELS: [usize; 5] = [2, 4, 6, 8, 10];
+
 /// Chance that a new flap grows off the newest one: higher makes snakes, lower makes blobs.
 const STRIP_BIAS: f64 = 0.6;
 
@@ -189,6 +192,53 @@ impl Puzzle {
         self.crossing_pairs(slot_of).len()
     }
 
+    /// The vertices in order around the sheet's outline: the edges only one flap has, chained.
+    /// A triangulated polygon lies flat around a circle only in this order or its reverse.
+    pub fn outline(&self) -> Vec<usize> {
+        let n = self.dots();
+        let mut next: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for e in self.edges.iter().filter(|e| !e.shared) {
+            next[e.a].push(e.b);
+            next[e.b].push(e.a);
+        }
+        let (mut prev, mut at) = (usize::MAX, 0);
+        let mut order = vec![0];
+        while order.len() < n {
+            let to = *next[at].iter().find(|&&w| w != prev).unwrap();
+            order.push(to);
+            (prev, at) = (at, to);
+        }
+        order
+    }
+
+    /// The fewest moves that solve the puzzle from `slot_of`. A move takes one dot out and puts it
+    /// back anywhere, so dots never moved keep their order around the circle, and the solution
+    /// keeps the outline's order. The dots left alone can be at most the longest run, in circle
+    /// order, that already sits in outline order (either way round); every other dot needs one
+    /// move, and one each is enough.
+    pub fn fewest_moves(&self, slot_of: &[usize]) -> usize {
+        let n = self.dots();
+        let outline = self.outline();
+        let mut place = vec![0; n];
+        for (i, &v) in outline.iter().enumerate() {
+            place[v] = i;
+        }
+        let mut around = vec![0; n];
+        for (v, &s) in slot_of.iter().enumerate() {
+            around[s] = v;
+        }
+        let mut longest = 0;
+        for reverse in [false, true] {
+            let target = |v: usize| if reverse { (n - place[v]) % n } else { place[v] };
+            for first in 0..n {
+                // places along the outline from the first kept dot, read in circle order
+                let seq = (0..n).map(|i| (target(around[(first + i) % n]) + n - target(around[first])) % n);
+                longest = longest.max(longest_increasing(seq));
+            }
+        }
+        n - longest
+    }
+
     /// The shape turned, and mirrored if the player's outline runs the other way, to best match
     /// the solved circle, then centered and scaled to fit the unit circle.
     pub fn unfold_target(&self, slot_of: &[usize]) -> Vec<Point> {
@@ -286,9 +336,12 @@ impl Attempt {
     /// onto. Does nothing when not carrying.
     pub fn step(&mut self, dir: isize) {
         let Some(v) = self.carried() else { return };
-        let n = self.slot_of.len() as isize;
-        let w = self.vertex_at((self.slot_of[v] as isize + dir).rem_euclid(n) as usize);
-        self.slot_of.swap(v, w);
+        step_slots(&mut self.slot_of, v, dir);
+    }
+
+    /// The fewest moves this level can be solved in, from where it started.
+    pub fn par(&self) -> usize {
+        self.puzzle.fewest_moves(&self.puzzle.start)
     }
 
     /// Whether it counted as a move. Setting a dot down between the same two dots it left changes
@@ -316,6 +369,14 @@ impl Attempt {
     }
 }
 
+/// Vertex v trades places with the dot one slot over, +1 counterclockwise, -1 clockwise.
+fn step_slots(slot_of: &mut [usize], v: usize, dir: isize) {
+    let n = slot_of.len() as isize;
+    let next = (slot_of[v] as isize + dir).rem_euclid(n) as usize;
+    let w = slot_of.iter().position(|&s| s == next).unwrap();
+    slot_of.swap(v, w);
+}
+
 /// The dots on either side of v, counterclockwise first.
 fn neighbors(slot_of: &[usize], v: usize) -> (usize, usize) {
     let n = slot_of.len();
@@ -341,6 +402,19 @@ fn edges_of(flaps: &[[usize; 3]]) -> Vec<Edge> {
         }
     }
     edges
+}
+
+/// The length of the longest strictly increasing subsequence, by patience sorting.
+fn longest_increasing(seq: impl Iterator<Item = usize>) -> usize {
+    let mut tails: Vec<usize> = Vec::new();
+    for x in seq {
+        match tails.binary_search(&x) {
+            Ok(_) => {}
+            Err(i) if i == tails.len() => tails.push(x),
+            Err(i) => tails[i] = x,
+        }
+    }
+    tails.len()
 }
 
 /// Chords between circle slots cross when exactly one end of the second lies strictly
@@ -671,6 +745,74 @@ mod tests {
         let up = p.upright();
         assert!((up[0].x - 1.0).abs() < 1e-12 && up[0].y.abs() < 1e-12, "{:?}", up[0]);
         assert!(up.iter().all(|q| q.dist(Point::ZERO) <= 1.0 + 1e-12));
+    }
+
+    /// Par against a breadth-first search over every arrangement, using the game's own moves (pick
+    /// a dot up, step it any distance either way) and its own test for solved (no crossings), so
+    /// it checks the outline argument as well as the arithmetic.
+    #[test]
+    fn par_is_the_fewest_moves() {
+        use std::collections::{HashMap, VecDeque};
+        // crossings depend only on the order around the circle, so arrangements are compared
+        // with vertex 0 turned to slot 0
+        let canon = |slot_of: &[usize]| -> Vec<usize> {
+            let n = slot_of.len();
+            slot_of.iter().map(|&s| (s + n - slot_of[0]) % n).collect()
+        };
+        for seed in [1, 2, 3, 0xABC123] {
+            for level in 1..=5 {
+                let p = Puzzle::new(Seed(seed), level);
+                let n = p.dots();
+                let start = canon(&p.start);
+                let mut dist = HashMap::from([(start.clone(), 0)]);
+                let mut queue = VecDeque::from([start]);
+                let found = loop {
+                    let s = queue.pop_front().expect("every level is solvable");
+                    let d = dist[&s];
+                    if p.crossings(&s) == 0 {
+                        break d;
+                    }
+                    for v in 0..n {
+                        for dir in [1, -1] {
+                            let mut t = s.clone();
+                            for _ in 1..n {
+                                step_slots(&mut t, v, dir);
+                                let c = canon(&t);
+                                if !dist.contains_key(&c) {
+                                    dist.insert(c.clone(), d + 1);
+                                    queue.push_back(c);
+                                }
+                            }
+                        }
+                    }
+                };
+                assert_eq!(p.fewest_moves(&p.start), found, "{}", p.code());
+                assert_eq!(Attempt::new(p).par(), found);
+            }
+        }
+    }
+
+    /// The outline visits every vertex once, along edges only one flap has.
+    #[test]
+    fn outlines_go_all_the_way_round() {
+        for level in 1..=12 {
+            let p = Puzzle::new(Seed(0x5EED), level);
+            let o = p.outline();
+            let mut sorted = o.clone();
+            sorted.sort();
+            assert_eq!(sorted, (0..p.dots()).collect::<Vec<_>>());
+            for i in 0..o.len() {
+                let (a, b) = (o[i].min(o[(i + 1) % o.len()]), o[i].max(o[(i + 1) % o.len()]));
+                assert!(p.edges.iter().any(|e| (e.a, e.b) == (a, b) && !e.shared));
+            }
+            // laid out in outline order, nothing crosses and no moves are needed
+            let mut slot_of = vec![0; p.dots()];
+            for (i, &v) in o.iter().enumerate() {
+                slot_of[v] = i;
+            }
+            assert_eq!(p.crossings(&slot_of), 0);
+            assert_eq!(p.fewest_moves(&slot_of), 0);
+        }
     }
 
     #[test]

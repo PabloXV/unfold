@@ -13,6 +13,13 @@ export class Game {
 	readonly flaps: [number, number, number][];
 	readonly edges: Edge[];
 	readonly priorBest: number | undefined;
+	/** The fewest moves this level can be solved in. */
+	readonly par: number;
+	/**
+	 * Per flap, which way round its corners run on the flat sheet, as the sign of its area. A
+	 * flap drawn the other way round shows the back of the paper.
+	 */
+	readonly faceUp: number[];
 
 	slots = $state<number[]>([]);
 	moves = $state(0);
@@ -55,6 +62,9 @@ export class Game {
 			shared: e[4 * i + 3] === 1
 		}));
 		this.priorBest = keepScores ? bestMoves(seed, level) : undefined;
+		this.par = attempt.par;
+		const sheet = pairs(attempt.shape());
+		this.faceUp = this.flaps.map((f) => Math.sign(turn(f.map((v) => sheet[v]))));
 		this.#sync();
 	}
 
@@ -132,6 +142,11 @@ export class Game {
 		else this.pickUp(this.vertexAt(this.cursor));
 	}
 
+	/** The flat sheet fitted into the unit circle, the way it was drawn. */
+	sheet(): Point[] {
+		return pairs(this.#attempt.upright());
+	}
+
 	/** Releases the wasm side. The game can't be used after. */
 	free(): void {
 		this.#attempt.free();
@@ -146,6 +161,11 @@ export class Game {
 		const c = a.crossingPairs();
 		this.crossingPairs = Array.from({ length: c.length / 2 }, (_, i) => [c[2 * i], c[2 * i + 1]]);
 	}
+}
+
+/** Twice a triangle's signed area: positive when its corners run counterclockwise. */
+export function turn([a, b, c]: Point[]): number {
+	return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
 }
 
 function pairs(xy: Float64Array): Point[] {

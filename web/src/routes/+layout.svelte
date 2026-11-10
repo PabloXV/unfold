@@ -23,8 +23,8 @@
 		--button: #fbf9f4;
 		--ring: #d4ccbe;
 		--paper: #fffdf8;
-		--paper-deep: #ebe4d6;
-		--paper-solved: #f1f7ec;
+		--paper-front: #d9473f;
+		--paper-back: #f2c14e;
 		--ink: #2f2b26;
 		--dot: #2f2b26;
 		--shadow: rgb(60 45 25 / 0.26);
@@ -44,8 +44,8 @@
 			--button: #262421;
 			--ring: #3d3a34;
 			--paper: #ece6da;
-			--paper-deep: #cbc3b4;
-			--paper-solved: #dfeedd;
+			--paper-front: #d24a42;
+			--paper-back: #e8b84a;
 			--ink: #2a2622;
 			--dot: #d8d0c2;
 			--shadow: rgb(0 0 0 / 0.5);

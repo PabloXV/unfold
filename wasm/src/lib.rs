@@ -88,6 +88,12 @@ impl Attempt {
         self.0.solved()
     }
 
+    /// The fewest moves this level can be solved in, from its start.
+    #[wasm_bindgen(getter)]
+    pub fn par(&self) -> u32 {
+        self.0.par() as u32
+    }
+
     #[wasm_bindgen(getter)]
     pub fn crossings(&self) -> u32 {
         self.0.crossings() as u32
@@ -150,6 +156,12 @@ pub fn daily_seed(day: u32) -> u32 {
 #[wasm_bindgen(js_name = parseCode)]
 pub fn parse_code(code: &str) -> Option<Vec<u32>> {
     uc::parse_code(code.trim()).map(|(seed, level)| vec![seed.0, level as u32])
+}
+
+/// The levels of a seed that make up a day's puzzle.
+#[wasm_bindgen(js_name = dailyLevels)]
+pub fn daily_levels() -> Vec<u32> {
+    uc::DAILY_LEVELS.iter().map(|&l| l as u32).collect()
 }
 
 #[wasm_bindgen(js_name = firstLevelDots)]
