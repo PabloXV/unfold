@@ -21,9 +21,10 @@
 	const CARD_DELAY = 1500;
 	/** After a solve, time to watch the paper unfold before the next level slides in. */
 	const ADVANCE_DELAY = 2000;
-	/** The new level eases in; the old one eases out sooner, so the two barely overlap. */
-	const SLIDE_IN = 380;
+	/** The old level slides off first; the new one follows once it's mostly gone. */
 	const SLIDE_OUT = 240;
+	const SLIDE_IN = 380;
+	const SLIDE_GAP = 130;
 	const RESHAPED_KEY = 'unfold:reshaped';
 	const BACKDROPS = { light: [LIGHT.bg, LIGHT.spot], dark: [DARK.bg, DARK.spot] };
 
@@ -348,7 +349,7 @@
 	<div class="board">
 		{#if game}
 			{#key game}
-				<div class="slide" in:fly={{ x: `${slide * 70}%`, opacity: 0, duration: SLIDE_IN, easing: cubicOut }} out:fly={{ x: `${-slide * 70}%`, opacity: 0, duration: SLIDE_OUT, easing: cubicIn }}>
+				<div class="slide" in:fly={{ x: `${slide * 70}%`, opacity: 0, duration: SLIDE_IN, delay: SLIDE_GAP, easing: cubicOut }} out:fly={{ x: `${-slide * 70}%`, opacity: 0, duration: SLIDE_OUT, easing: cubicIn }}>
 					<Board {game} {showCursor} />
 				</div>
 			{/key}
