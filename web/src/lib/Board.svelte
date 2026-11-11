@@ -165,12 +165,10 @@
 				})
 	);
 
-	/** Idle dots ripple; a held one pulses while the rest go still; a hovered or keyboard one holds a ring. */
-	function dotState(v: number): 'ripple' | 'held' | 'focus' | 'still' {
+	/** Rings only on the held dot and the keyboard's; touch and mouse show what they grab by moving it. */
+	function ring(v: number): 'held' | 'focus' | undefined {
 		if (game.carried === v) return 'held';
-		if (game.carrying || drag) return 'still';
-		if (hovered === v || (showCursor && game.slots[v] === game.cursor)) return 'focus';
-		return 'ripple';
+		if (!game.carrying && !drag && showCursor && game.slots[v] === game.cursor) return 'focus';
 	}
 </script>
 
@@ -192,20 +190,12 @@
 	</svg>
 	<svg bind:this={svg} class="dots" viewBox="-1.25 -1.25 2.5 2.5" aria-hidden="true">
 		{#each marks as m, i (i)}
-			<g transform="translate({m.x} {-m.y})"><circle class="ripple cross" r="0.08" /></g>
+			<circle class="cross" cx={m.x} cy={-m.y} r="0.045" />
 		{/each}
 		{#if pos.length === game.dots && !game.solved}
 			{#each pos as p, v (v)}
-				{@const state = dotState(v)}
-				<g transform="translate({p.x} {-p.y})">
-					{#if state === 'ripple'}
-						<circle class="ripple" r="0.11" />
-					{:else if state === 'held'}
-						<circle class="held" r="0.085" />
-					{:else if state === 'focus'}
-						<circle class="focus" r="0.085" />
-					{/if}
-				</g>
+				{@const kind = ring(v)}
+				{#if kind}<circle class={kind} cx={p.x} cy={-p.y} r="0.085" />{/if}
 			{/each}
 		{/if}
 	</svg>
@@ -235,63 +225,23 @@
 	.dragging {
 		cursor: grabbing;
 	}
-	.ripple,
+	.cross,
 	.held,
 	.focus {
 		fill: none;
 		vector-effect: non-scaling-stroke;
 		stroke-dasharray: 3 3;
-		transform-box: fill-box;
-		transform-origin: center;
 	}
-	.ripple {
-		stroke: var(--dot);
-		stroke-width: 2px;
-		animation: ripple 1.5s ease-out infinite;
-	}
-	.ripple.cross {
+	.cross {
 		stroke: var(--cross);
 		stroke-width: 2.5px;
 	}
 	.held {
 		stroke: var(--carry);
 		stroke-width: 2.5px;
-		animation: held 1.2s ease-in-out infinite;
 	}
 	.focus {
 		stroke: var(--accent);
 		stroke-width: 2px;
-	}
-	@keyframes ripple {
-		0% {
-			transform: scale(0.2);
-			opacity: 1;
-		}
-		55% {
-			opacity: 0.85;
-		}
-		100% {
-			transform: scale(1);
-			opacity: 0;
-		}
-	}
-	@keyframes held {
-		0%,
-		100% {
-			opacity: 1;
-		}
-		50% {
-			opacity: 0.35;
-		}
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.ripple,
-		.held {
-			animation: none;
-		}
-		.ripple {
-			transform: scale(0.55);
-			opacity: 0.7;
-		}
 	}
 </style>

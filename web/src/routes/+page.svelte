@@ -51,6 +51,7 @@
 
 	const here = () => location.origin + location.pathname;
 	const shapeKey = () => `unfold:shape:${day}`;
+	const solvedKey = () => `unfold:solved:${day}`;
 
 	onMount(() => {
 		loadCore().then(
@@ -115,12 +116,15 @@
 		return ladder[rung + step];
 	}
 
-	/** The card's shape: as saved, else as just unfolded, else the flat sheet. */
+	/** The card's shape: as reshaped, else as solved, on whichever side the player solved it. */
 	function loadCorners(): void {
 		if (!game || !onLastRung) return;
-		unfoldedCorners = game.solved ? game.unfolded.map((p) => ({ ...p })) : game.sheet();
-		const saved = readJson<Point[]>(shapeKey());
-		corners = saved?.length === game.dots ? saved : unfoldedCorners;
+		const fits = (p: Point[] | undefined) => p?.length === game!.dots;
+		if (game.solved) writeJson(solvedKey(), round(game.unfolded));
+		const solved = readJson<Point[]>(solvedKey());
+		unfoldedCorners = fits(solved) ? solved : game.sheet();
+		const reshaped = readJson<Point[]>(shapeKey());
+		corners = fits(reshaped) ? reshaped : unfoldedCorners;
 	}
 
 	function openCard(): void {
@@ -134,11 +138,10 @@
 
 	function saveCorners(next: Point[]): void {
 		corners = next;
-		writeJson(
-			shapeKey(),
-			next.map((p) => ({ x: +p.x.toFixed(4), y: +p.y.toFixed(4) }))
-		);
+		writeJson(shapeKey(), round(next));
 	}
+
+	const round = (pts: Point[]) => pts.map((p) => ({ x: +p.x.toFixed(4), y: +p.y.toFixed(4) }));
 
 	function resetShape(): void {
 		if (unfoldedCorners) corners = unfoldedCorners;
