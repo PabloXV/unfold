@@ -144,7 +144,7 @@
 	class:grabbing={dragging !== undefined}
 	viewBox="0 0 {SIZE} {SIZE}"
 	role="img"
-	aria-label="Share card: {result.date}, {result.moves} moves, fewest {result.par}"
+	aria-label="Share card: {result.date}, {result.moves} moves, fewest possible {result.par}"
 	{onpointerdown}
 	{onpointermove}
 	{onpointerup}
@@ -174,7 +174,7 @@
 	</g>
 
 	<text x={CX} y="960" fill={INK} font-family={FONT} font-size="48" font-weight="700" text-anchor="middle">
-		{result.moves} moves · fewest {result.par}
+		{result.moves} moves · fewest possible {result.par}
 	</text>
 	<text x={CX} y="1024" fill={MUTED} font-family={FONT} font-size="30" text-anchor="middle">{host}</text>
 </svg>

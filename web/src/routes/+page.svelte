@@ -287,7 +287,7 @@
 		<h1>unfold</h1>
 		{#if game}
 			<p class="meta">
-				{[daily && day !== undefined ? formatDay(day) : `level ${game.level}`, `fewest ${game.par}`, game.best !== undefined && `best ${game.best}`]
+				{[daily && day !== undefined ? formatDay(day) : `level ${game.level}`, `fewest possible ${game.par}`]
 					.filter(Boolean)
 					.join(' · ')}
 				{#if !daily}<span class="code">{game.code}</span>{/if}
@@ -313,9 +313,7 @@
 				{notice}
 			{:else if game.solved}
 				<strong>
-					Solved in {game.moves} {game.moves === 1 ? 'move' : 'moves'}{game.moves <= game.par ? ', the fewest!' : ` (fewest ${game.par})`}{game.newBest
-						? ' New best!'
-						: ''}
+					Solved in {game.moves} {game.moves === 1 ? 'move' : 'moves'}{game.moves <= game.par ? ', the fewest possible!' : ` (fewest possible ${game.par})`}
 				</strong>
 			{:else}
 				{game.moves} {game.moves === 1 ? 'move' : 'moves'}
@@ -349,7 +347,7 @@
 			<h2>How to play</h2>
 			<p>The paper is folded up around a circle. Move its dots until no creases cross, and it unfolds.</p>
 			<p>Drag a dot along the circle; the others shift over to make room. Setting a dot down somewhere new is a move.</p>
-			<p>Fewest is the least number of moves it can be solved in. There's a new puzzle every day.</p>
+			<p>Fewest possible is the least number of moves it can be solved in. There's a new puzzle every day.</p>
 			<p>When it's solved, share your card. Drag its corners to fold the paper into a shape of your own first.</p>
 			<dl class="keys">
 				<dt>← →</dt>

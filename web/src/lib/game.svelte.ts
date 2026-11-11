@@ -1,5 +1,5 @@
 import { points, turn } from './geometry';
-import { bestMoves, record } from './scores';
+import { record } from './scores';
 import { Attempt, type Point } from './unfold';
 
 /** One attempt at a level as reactive state, mirroring the wasm Attempt after every change. */
@@ -10,7 +10,6 @@ export class Game {
 	readonly dots: number;
 	/** Vertex triples, stacked bottom to top. */
 	readonly flaps: number[][];
-	readonly priorBest: number | undefined;
 	readonly par: number;
 	/** Per flap, the sign of its area on the flat sheet; drawn the other way round, it shows its back. */
 	readonly faceUp: number[];
@@ -36,7 +35,6 @@ export class Game {
 		this.code = this.#attempt.code;
 		this.dots = this.#attempt.dots;
 		this.flaps = groups(this.#attempt.flaps(), 3);
-		this.priorBest = bestMoves(seed, level);
 		this.par = this.#attempt.par;
 		const sheet = points(this.#attempt.shape());
 		this.faceUp = this.flaps.map((f) => Math.sign(turn(f.map((v) => sheet[v]))));
@@ -50,15 +48,6 @@ export class Game {
 	/** Whether restarting would lose anything. */
 	get inProgress(): boolean {
 		return !this.solved && (this.moves > 0 || this.carrying);
-	}
-
-	get best(): number | undefined {
-		const all = [this.priorBest, this.solved ? this.moves : undefined].filter((n) => n !== undefined);
-		return all.length ? Math.min(...all) : undefined;
-	}
-
-	get newBest(): boolean {
-		return this.solved && this.priorBest !== undefined && this.moves < this.priorBest;
 	}
 
 	vertexAt(slot: number): number {
