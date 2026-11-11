@@ -6,12 +6,12 @@
 	import Icon from '#lib/Icon.svelte';
 	import { Game } from '#lib/game.svelte.ts';
 	import { dailyLevel, dailySeed, formatDay, loadCore, paperColors, parseCode, today, type Point } from '#lib/unfold.ts';
-	import { bestMoves } from '#lib/scores.ts';
+	import { bestMoves, streak } from '#lib/scores.ts';
 	import { forget, readJson, writeJson } from '#lib/storage.ts';
-	import { copyText, shareCard, shareLink, shareText, toPng, type Result } from '#lib/card.ts';
+	import { copyText, score, shareCard, shareLink, shareText, toPng, type Result } from '#lib/card.ts';
 	import { accentFor } from '#lib/accent.ts';
 	import { swanUrl } from '#lib/favicon.ts';
-	import { DARK, LIGHT } from '#lib/theme.ts';
+	import { CARD_BAR, DARK, LIGHT } from '#lib/theme.ts';
 
 	const RESTART_TIME = 2000;
 	const NOTICE_TIME = 1500;
@@ -53,7 +53,11 @@
 		void scored;
 		if (!daily || !game || day === undefined) return;
 		const moves = bestMoves(game.code);
-		return moves === undefined ? undefined : { date: formatDay(day), moves, par: game.par };
+		return moves === undefined ? undefined : { date: formatDay(day), moves, par: game.par, streak: streak(day) };
+	});
+	const streakDays = $derived.by(() => {
+		void scored;
+		return daily && day !== undefined ? streak(day) : 0;
 	});
 
 	const here = () => location.origin + location.pathname;
@@ -99,14 +103,17 @@
 		style.setProperty('--paper-front', front);
 		style.setProperty('--paper-back', back);
 		document.querySelector('link[rel="icon"]')?.setAttribute('href', swanUrl(front, back));
-		const accent = accentFor(paper, dark ? BACKDROPS.dark : BACKDROPS.light);
-		if (accent) {
-			style.setProperty('--accent', accent.accent);
-			style.setProperty('--on-accent', accent.onAccent);
-		} else {
-			style.removeProperty('--accent');
-			style.removeProperty('--on-accent');
-		}
+		const setAccent = (name: string, accent: ReturnType<typeof accentFor>) => {
+			if (accent) {
+				style.setProperty(`--${name}`, accent.accent);
+				style.setProperty(`--on-${name}`, accent.onAccent);
+			} else {
+				style.removeProperty(`--${name}`);
+				style.removeProperty(`--on-${name}`);
+			}
+		};
+		setAccent('accent', accentFor(paper, dark ? BACKDROPS.dark : BACKDROPS.light));
+		setAccent('card-accent', accentFor(paper, [CARD_BAR, ...BACKDROPS.light]));
 	});
 
 	$effect(() => {
@@ -276,18 +283,14 @@
 
 <svelte:window {onkeydown} onpointerdown={() => (showCursor = false)} />
 
-<svelte:head>
-	<title>unfold</title>
-	<meta name="description" content="A daily origami puzzle: move the dots around the circle until no creases cross, and watch the paper unfold." />
-</svelte:head>
-
 <main>
 	<header>
 		<button class="icon help" onclick={() => (helpOpen = true)} aria-label="How to play" title="How to play"><Icon name="help" /></button>
 		<h1>unfold</h1>
 		{#if game}
 			<p class="meta">
-				{daily && day !== undefined ? formatDay(day) : `level ${game.level}`} · fewest possible {game.par}
+				{daily && day !== undefined ? formatDay(day) : `level ${game.level}`} · solvable in {game.par}
+				{#if streakDays}<span class="streak" aria-label="{streakDays} day streak">· <Icon name="fire" />{streakDays}</span>{/if}
 				{#if !daily}<span class="code">{game.code}</span>{/if}
 			</p>
 		{/if}
@@ -311,7 +314,7 @@
 				{notice}
 			{:else if game.solved}
 				<strong>
-					Solved in {game.moves} {game.moves === 1 ? 'move' : 'moves'}{game.moves <= game.par ? ', the fewest possible!' : ` (fewest possible ${game.par})`}
+					Solved in {score(game.moves, game.par)}
 				</strong>
 			{:else}
 				{game.moves} {game.moves === 1 ? 'move' : 'moves'}
@@ -345,7 +348,7 @@
 			<h2>How to play</h2>
 			<p>The paper is folded up around a circle. Move its dots until no creases cross, and it unfolds.</p>
 			<p>Drag a dot along the circle; the others shift over to make room. Setting a dot down somewhere new is a move.</p>
-			<p>Fewest possible is the least number of moves it can be solved in. There's a new puzzle every day.</p>
+			<p>"Solvable in 6" is the fewest moves it can be done in; each move over shows as +1. The fire counts the days in a row you've solved. There's a new puzzle every day.</p>
 			<p>When it's solved, share your card. Drag its corners to fold the paper into a shape of your own first.</p>
 			<dl class="keys">
 				<dt>← →</dt>
@@ -365,8 +368,7 @@
 
 {#if cardOpen && result && corners && game}
 	<div class="overlay" role="presentation" onclick={(e) => e.target === e.currentTarget && closeCard()}>
-		<div class="sheet" role="dialog" aria-modal="true" aria-label="Your card">
-			<button class="icon close" onclick={closeCard} aria-label="Close"><Icon name="close" /></button>
+		<div class="card-pop" role="dialog" aria-modal="true" aria-label="Your card">
 			<div class="frame">
 				<Card
 					bind:this={cardView}
@@ -379,11 +381,11 @@
 					hint={!readJson<boolean>(RESHAPED_KEY)}
 					onchange={saveShape}
 				/>
-				<div class="bar" role="toolbar" aria-label="Card">
+				<div class="bar" role="toolbar" aria-label="Card" style:background={CARD_BAR}>
 					<button class="icon" onclick={resetShape} disabled={!reshaped} aria-label="Reset shape" title="Reset shape">
 						<Icon name="reset" />
 					</button>
-					<button class="icon" onclick={share} aria-label="Share card" title="Share card">
+					<button class="icon share" onclick={share} aria-label="Share card" title="Share card">
 						<Icon name="share" />
 					</button>
 					<button class="icon" onclick={shareResultLink} aria-label="Share link" title="Share link">
@@ -391,6 +393,7 @@
 					</button>
 				</div>
 			</div>
+			<button class="icon close" onclick={closeCard} aria-label="Close"><Icon name="close" /></button>
 			<p class="notice" aria-live="polite">{notice}</p>
 		</div>
 	</div>
@@ -532,22 +535,54 @@
 	.keys dd {
 		margin: 0;
 	}
+	.card-pop {
+		position: relative;
+		width: min(100%, 28rem, calc(100svh - 8rem));
+		animation: pop-in 0.35s cubic-bezier(0.2, 1.3, 0.4, 1);
+	}
+	.card-pop .close {
+		top: -0.9rem;
+		right: -0.9rem;
+		border: 1px solid var(--line);
+		background: var(--button);
+		color: var(--text);
+		box-shadow: 0 0.15rem 0.5rem rgb(0 0 0 / 0.25);
+	}
+	.card-pop .notice {
+		position: absolute;
+		top: calc(100% + 0.6rem);
+		left: 0;
+		right: 0;
+		text-align: center;
+		color: #f4f0e8;
+	}
+	.streak {
+		white-space: nowrap;
+	}
+	.streak :global(svg) {
+		display: inline-block;
+		vertical-align: -0.12em;
+		margin-right: 0.1em;
+	}
 	.frame {
 		width: 100%;
 		border-radius: 1rem;
 		overflow: hidden;
-		box-shadow: 0 0.25rem 1rem rgb(40 30 20 / 0.18);
+		box-shadow: 0 0.5rem 2rem rgb(0 0 0 / 0.35);
 	}
 	.bar {
 		display: flex;
 		justify-content: space-around;
 		padding: 0.35rem 0.5rem;
-		background: #e4ddd0;
 	}
 	.bar button {
 		border: none;
 		background: transparent;
 		color: #3a352f;
+	}
+	.bar button.share {
+		background: var(--card-accent, #3a352f);
+		color: var(--on-card-accent, #f4f0e8);
 	}
 	.bar button:disabled {
 		opacity: 0.3;

@@ -6,6 +6,8 @@ export type Result = {
 	date: string;
 	moves: number;
 	par: number;
+	/** Days in a row solved, counting this one. */
+	streak: number;
 };
 
 /** The card's width and height in pixels. */
@@ -13,9 +15,15 @@ export const SIZE = 1080;
 
 export const FONT = '"Courier Prime", "Courier New", monospace';
 
+/** Like "9 moves (+3)", over the fewest it can be done in, or "6 moves · perfect". */
+export function score(moves: number, par: number): string {
+	const count = `${moves} ${moves === 1 ? 'move' : 'moves'}`;
+	return moves <= par ? `${count} · perfect` : `${count} (+${moves - par})`;
+}
+
 /** The result as text ending with the link, which is what people tap. */
 export function shareText({ date, moves, par }: Result, url: string): string {
-	return `unfold ${date}\n${moves} moves · fewest possible ${par}\n${url}`;
+	return `unfold ${date}\n${score(moves, par)}\n${url}`;
 }
 
 let fonts: Promise<string> | undefined;

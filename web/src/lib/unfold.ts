@@ -1,7 +1,7 @@
-import init, { Attempt, dailyLevel, dailySeed, paperColors, parseCode } from './wasm/unfold_wasm.js';
+import init, { Attempt, dailyCode, dailyLevel, dailySeed, paperColors, parseCode } from './wasm/unfold_wasm.js';
 import wasmUrl from './wasm/unfold_wasm_bg.wasm?url';
 
-export { Attempt, dailyLevel, dailySeed, paperColors, parseCode };
+export { Attempt, dailyCode, dailyLevel, dailySeed, paperColors, parseCode };
 
 let ready: Promise<unknown> | undefined;
 

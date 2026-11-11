@@ -1,4 +1,6 @@
 export const LIGHT = { bg: '#ebe4d6', spot: '#fffdf8', text: '#2a2723', muted: '#7a736a' };
+/** Behind the share card's buttons, which stay light in either theme. */
+export const CARD_BAR = '#e4ddd0';
 export const DARK = { bg: '#3d3833', spot: '#6a645c' };
 
 /** The paper before a puzzle picks its own. */

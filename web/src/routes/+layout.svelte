@@ -1,7 +1,6 @@
 <script lang="ts">
 	import '@fontsource/courier-prime/400.css';
 	import '@fontsource/courier-prime/700.css';
-	import favicon from '#lib/assets/favicon.svg';
 	import { DARK, LIGHT } from '#lib/theme.ts';
 	import type { LayoutProps } from './$types';
 
@@ -9,8 +8,6 @@
 </script>
 
 <svelte:head>
-	<link rel="icon" href={favicon} />
-	<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 	<meta name="color-scheme" content="light dark" />
 	<meta name="theme-color" content={LIGHT.bg} media="(prefers-color-scheme: light)" />
 	<meta name="theme-color" content={DARK.bg} media="(prefers-color-scheme: dark)" />
