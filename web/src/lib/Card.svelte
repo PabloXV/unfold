@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import Paper from './Paper.svelte';
 	import { FONT, SIZE, type Result } from './card';
 	import { nearestTo, svgPoint, trianglePath } from './geometry';
@@ -11,7 +12,7 @@
 		faceUp,
 		corners,
 		host,
-		editing = false,
+		hint = false,
 		order,
 		onchange
 	}: {
@@ -23,8 +24,8 @@
 		/** Flap indices bottom to top. */
 		order: number[];
 		host: string;
-		/** Lets the corners be dragged anywhere. */
-		editing?: boolean;
+		/** Nudges a corner once, to show the paper can be reshaped. */
+		hint?: boolean;
 		onchange?: (corners: Point[], order: number[]) => void;
 	} = $props();
 
@@ -35,6 +36,9 @@
 	/** How far from the middle a corner can be dragged, and how near a press must be to grab one. */
 	const REACH = 1.15;
 	const GRAB = 0.22;
+	const HINT_DELAY = 700;
+	const HINT_LENGTH = 1100;
+	const HINT_REACH = 0.18;
 	const INK = '#2a2723';
 	const MUTED = '#7a736a';
 
@@ -50,6 +54,7 @@
 	let pos = $state.raw<Point[]>([]);
 	let stack = $state.raw<number[]>([]);
 	let dragging = $state<number | undefined>(undefined);
+	let hovered = $state<number | undefined>(undefined);
 	/** The flaps on the dragged corner, which flaps overlapped at the last step, and whether it moved. */
 	let moving = new Set<number>();
 	let overlapping = new Set<string>();
@@ -63,6 +68,30 @@
 		stack = order;
 	});
 
+	/** Pulls the corner furthest up and right toward the middle and lets it settle back. */
+	$effect(() => {
+		if (!hint || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+		let frame = 0;
+		const start = untrack(() => corners);
+		const timer = setTimeout(() => {
+			const v = start.reduce((best, p, i) => (p.x + p.y > start[best].x + start[best].y ? i : best), 0);
+			const home = start[v];
+			const begun = performance.now();
+			const step = (now: number) => {
+				if (dragging !== undefined) return;
+				const t = Math.min(1, (now - begun) / HINT_LENGTH);
+				const pull = HINT_REACH * Math.sin(Math.PI * t) ** 2;
+				pos = pos.map((q, i) => (i === v ? { x: home.x * (1 - pull), y: home.y * (1 - pull) } : q));
+				if (t < 1) frame = requestAnimationFrame(step);
+			};
+			frame = requestAnimationFrame(step);
+		}, HINT_DELAY);
+		return () => {
+			clearTimeout(timer);
+			cancelAnimationFrame(frame);
+		};
+	});
+
 	const silhouette = $derived(flaps.map((f) => trianglePath(f.map((v) => pos[v]))).join(''));
 
 	function cardPoint(e: PointerEvent): Point {
@@ -71,9 +100,10 @@
 	}
 
 	function onpointerdown(e: PointerEvent): void {
-		if (!editing || e.button > 0) return;
+		if (e.button > 0) return;
 		const v = nearestTo(pos, cardPoint(e), GRAB);
 		if (v === undefined) return;
+		pos = corners;
 		dragging = v;
 		moving = new Set(flaps.flatMap((f, k) => (f.includes(v) ? [k] : [])));
 		overlapping = overlaps(flaps, pos);
@@ -83,7 +113,10 @@
 	}
 
 	function onpointermove(e: PointerEvent): void {
-		if (dragging === undefined) return;
+		if (dragging === undefined) {
+			hovered = nearestTo(pos, cardPoint(e), GRAB);
+			return;
+		}
 		const p = cardPoint(e);
 		const k = Math.min(1, REACH / Math.hypot(p.x, p.y));
 		pos = pos.map((q, v) => (v === dragging ? { x: p.x * k, y: p.y * k } : q));
@@ -107,7 +140,8 @@
 <svg
 	bind:this={svg}
 	class="card"
-	class:editing
+	class:grab={hovered !== undefined}
+	class:grabbing={dragging !== undefined}
 	viewBox="0 0 {SIZE} {SIZE}"
 	role="img"
 	aria-label="Share card: {result.date}, {result.moves} moves, fewest {result.par}"
@@ -115,6 +149,7 @@
 	{onpointermove}
 	{onpointerup}
 	onpointercancel={onpointerup}
+	onpointerleave={() => (hovered = undefined)}
 >
 	<defs>
 		<radialGradient id="card-spot" cx={CX} cy={CY} r={SIZE * 0.62} gradientUnits="userSpaceOnUse">
@@ -136,11 +171,6 @@
 	<g transform="translate({CX} {CY}) scale({SCALE})">
 		<g filter="url(#card-shadow)"><path d={silhouette} fill="#000" /></g>
 		<Paper flaps={stack.map((k) => flaps[k])} faceUp={stack.map((k) => faceUp[k])} {pos} colors={PAPER} creaseWidth={0.009} id="card" />
-		{#if editing}
-			{#each pos as p, v (v)}
-				<circle class="handle no-export" class:held={dragging === v} cx={p.x} cy={-p.y} r="0.06" />
-			{/each}
-		{/if}
 	</g>
 
 	<text x={CX} y="960" fill={INK} font-family={FONT} font-size="48" font-weight="700" text-anchor="middle">
@@ -158,18 +188,10 @@
 		user-select: none;
 		-webkit-user-select: none;
 	}
-	.editing {
-		cursor: crosshair;
+	.grab {
+		cursor: grab;
 	}
-	.handle {
-		fill: none;
-		stroke: var(--dot);
-		stroke-width: 2px;
-		stroke-dasharray: 4 3;
-		vector-effect: non-scaling-stroke;
-	}
-	.handle.held {
-		stroke: var(--carry);
-		stroke-width: 3px;
+	.grabbing {
+		cursor: grabbing;
 	}
 </style>

@@ -1,11 +1,9 @@
 <script lang="ts">
-	let { name }: { name: 'pencil' | 'reset' | 'share' | 'link' | 'help' | 'close' } = $props();
+	let { name }: { name: 'reset' | 'share' | 'link' | 'help' | 'close' } = $props();
 </script>
 
 <svg viewBox="0 0 24 24" aria-hidden="true">
-	{#if name === 'pencil'}
-		<path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4Z" />
-	{:else if name === 'reset'}
+	{#if name === 'reset'}
 		<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4 4v5h5" />
 	{:else if name === 'share'}
 		<circle cx="18" cy="5" r="2.5" /><circle cx="6" cy="12" r="2.5" /><circle cx="18" cy="19" r="2.5" /><path d="M8.2 10.8l7.6-4.6M8.2 13.2l7.6 4.6" />

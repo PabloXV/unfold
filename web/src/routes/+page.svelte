@@ -15,6 +15,7 @@
 	const RESTART_TIME = 2000;
 	const NOTICE_TIME = 1500;
 	const CARD_DELAY = 1500;
+	const RESHAPED_KEY = 'unfold:reshaped';
 	const BACKDROPS = { light: ['#ebe4d6', '#fffdf8'], dark: ['#3d3833', '#6a645c'] };
 
 	let game = $state.raw<Game | undefined>(undefined);
@@ -26,8 +27,8 @@
 	let dark = $state(false);
 	let cardOpen = $state(false);
 	let helpOpen = $state(false);
-	let editing = $state(false);
 	/** The card's shape as reshaped, and as it first unfolded. */
+	let reshaped = $state(false);
 	let corners = $state.raw<Point[] | undefined>(undefined);
 	/** The card's flaps bottom to top; grabbing a corner lifts its flaps to the top. */
 	let order = $state.raw<number[]>([]);
@@ -144,10 +145,11 @@
 		if (game.solved) writeJson(solvedKey(), round(game.unfolded));
 		const solved = readJson<Point[]>(solvedKey());
 		unfoldedCorners = fits(solved) ? solved : game.sheet();
-		const reshaped = readJson<Point[]>(shapeKey());
-		corners = fits(reshaped) ? reshaped : unfoldedCorners;
-		const saved = readJson<number[]>(orderKey());
-		order = saved?.length === game.flaps.length ? saved : game.flaps.map((_, k) => k);
+		const saved = readJson<Point[]>(shapeKey());
+		reshaped = fits(saved);
+		corners = reshaped ? saved! : unfoldedCorners;
+		const stack = readJson<number[]>(orderKey());
+		order = stack?.length === game.flaps.length ? stack : game.flaps.map((_, k) => k);
 	}
 
 	function openCard(): void {
@@ -156,12 +158,14 @@
 	}
 
 	function closeCard(): void {
-		cardOpen = editing = false;
+		cardOpen = false;
 	}
 
 	function saveShape(next: Point[], stack: number[]): void {
 		corners = next;
 		order = stack;
+		reshaped = true;
+		writeJson(RESHAPED_KEY, true);
 		writeJson(shapeKey(), round(next));
 		writeJson(orderKey(), stack);
 	}
@@ -171,13 +175,13 @@
 	function resetShape(): void {
 		if (unfoldedCorners) corners = unfoldedCorners;
 		order = game ? game.flaps.map((_, k) => k) : [];
+		reshaped = false;
 		forget(shapeKey());
 		forget(orderKey());
 	}
 
 	async function share(): Promise<void> {
 		if (!png || !result) return;
-		editing = false;
 		const outcome = await shareCard(await png, shareText(result, here()));
 		if (outcome === 'copied') flash('card copied');
 		else if (outcome === 'downloaded') flash('card saved');
@@ -242,7 +246,7 @@
 	function onkeydown(e: KeyboardEvent): void {
 		if (!game || e.metaKey || e.ctrlKey || e.altKey) return;
 		if (cardOpen || helpOpen) {
-			if (e.key === 'Escape') cardOpen = helpOpen = editing = false;
+			if (e.key === 'Escape') cardOpen = helpOpen = false;
 			return;
 		}
 		if (e.key !== 'r') restartAsked = false;
@@ -346,7 +350,7 @@
 			<p>The paper is folded up around a circle. Move its dots until no creases cross, and it unfolds.</p>
 			<p>Drag a dot along the circle; the others shift over to make room. Setting a dot down somewhere new is a move.</p>
 			<p>Fewest is the least number of moves it can be solved in. There's a new puzzle every day.</p>
-			<p>When it's solved, share your card. The pencil lets you fold the paper into a shape of your own first.</p>
+			<p>When it's solved, share your card. Drag its corners to fold the paper into a shape of your own first.</p>
 			<dl class="keys">
 				<dt>← →</dt>
 				<dd>move around the circle</dd>
@@ -376,14 +380,11 @@
 					{corners}
 					{order}
 					host={location.host}
-					{editing}
+					hint={!readJson<boolean>(RESHAPED_KEY)}
 					onchange={saveShape}
 				/>
 				<div class="bar" role="toolbar" aria-label="Card">
-					<button class:on={editing} onclick={() => (editing = !editing)} aria-pressed={editing} aria-label="Reshape" title="Reshape">
-						<Icon name="pencil" />
-					</button>
-					<button onclick={resetShape} aria-label="Reset shape" title="Reset shape">
+					<button onclick={resetShape} disabled={!reshaped} aria-label="Reset shape" title="Reset shape">
 						<Icon name="reset" />
 					</button>
 					<button onclick={share} aria-label="Share card" title="Share card">
@@ -561,9 +562,8 @@
 		background: transparent;
 		color: #3a352f;
 	}
-	.bar button.on {
-		background: #3a352f;
-		color: #f4f0e8;
+	.bar button:disabled {
+		opacity: 0.3;
 	}
 	.notice {
 		margin: 0;

@@ -31,10 +31,9 @@ function embeddedFonts(): Promise<string> {
 	return (fonts ??= Promise.all([inline(regular, 400), inline(bold, 700)]).then((rules) => rules.join('')));
 }
 
-/** The card's svg as a PNG, leaving out anything with the class `no-export`. */
+/** The card's svg as a PNG. */
 export async function toPng(svg: SVGSVGElement, size = SIZE): Promise<Blob> {
 	const copy = svg.cloneNode(true) as SVGSVGElement;
-	copy.querySelectorAll('.no-export').forEach((el) => el.remove());
 	const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
 	style.textContent = await embeddedFonts();
 	copy.prepend(style);
