@@ -41,9 +41,6 @@ usage: unfld [level | seed/level] [--daily [date | ±days] | --rand]
 
 Without a level, play picks up at the first level of the seed not yet solved.";
 
-// ---------------------------------------------------------------------------------------------
-// Seeds, scores, palette
-
 fn random_seed() -> Seed {
     Seed(rand::rng().random_range(0..=Seed::MASK))
 }
@@ -66,7 +63,6 @@ impl Scores {
         let data = std::env::var_os("XDG_DATA_HOME")
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")));
-        // not "best", which held scores from when a move was a swap
         let path = data.map(|dir| dir.join("unfld/scores"));
         let text = path.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
         let best = text
@@ -119,9 +115,6 @@ impl Palette {
         if self.color { "●" } else { "◉" }
     }
 }
-
-// ---------------------------------------------------------------------------------------------
-// Game state
 
 /// Every dot gliding from where it was drawn when the slide began to where it now belongs.
 struct Slide {
@@ -282,7 +275,6 @@ impl Game {
         if self.slide.as_ref().is_some_and(|s| s.started.elapsed() >= SLIDE_TIME) {
             self.slide = None;
         }
-        // counted from the last key too, since no frames are drawn while everything is still
         let step = self.ticked_at.max(self.touched_at).elapsed().as_secs_f64() / LIFT_TIME.as_secs_f64();
         self.ticked_at = Instant::now();
         for v in 0..self.lift.len() {
@@ -377,9 +369,6 @@ fn ease(t: f64) -> f64 {
     t * t * (3.0 - 2.0 * t)
 }
 
-// ---------------------------------------------------------------------------------------------
-// Drawing
-
 /// Creases drawn as if each flap were an opaque sheet of paper.
 struct Flaps {
     tris: Vec<[Point; 3]>,
@@ -456,7 +445,6 @@ impl Shape for Flaps {
                 _ => 100,
             };
             for i in 0..=steps {
-                // each dot has a fixed pseudo-random threshold, so a crease dissolves in a scatter
                 let threshold = (i.wrapping_mul(2654435761) ^ e.wrapping_mul(40503)) % 1000;
                 if shared && (threshold as f64) < self.dissolve * 1000.0 {
                     continue;
@@ -503,9 +491,8 @@ impl Board {
         nearest.dist(Point::ZERO) > 1.0 + LIFT + cell.y
     }
 
-    /// Canvas text and braille dots round to cells differently, so text printed at a point can
-    /// land a cell away from the dot drawn there. This finds the dot's cell (as Painter::get_point
-    /// does) and returns the point that text placement maps to that cell.
+    /// Where to print text so it lands in the same cell as the braille dot drawn at `p`, since the
+    /// two round to cells differently.
     fn text_pos(&self, p: Point) -> Point {
         let dot_x = ((p.x + self.half_w) * (self.cols * 2.0 - 1.0) / (2.0 * self.half_w)).round();
         let dot_y = ((self.half_h - p.y) * (self.rows * 4.0 - 1.0) / (2.0 * self.half_h)).round();
@@ -556,8 +543,6 @@ fn render(frame: &mut Frame, game: &Game, view: &View) {
     let board = Board::new(area);
     let crossings = game.visible_crossings();
     let paper = Flaps::paper(game, palette, crossings.clone());
-    // a whole cell, because a cell holds one color: a smaller shift would mostly land in cells
-    // the creases already own and get painted over
     let shadow = paper.shadow(Point::new(board.cell().x, -board.cell().y));
     let canvas = Canvas::default()
         .x_bounds([-board.half_w, board.half_w])
@@ -589,8 +574,6 @@ fn render(frame: &mut Frame, game: &Game, view: &View) {
         });
     frame.render_widget(canvas, area);
 
-    // the title and seed sit over the board's top-left corner, which the centered circle leaves
-    // empty unless the terminal is narrow; then only the seed shows
     let mut info_row = area.y;
     if board.corner_is_free(Title::WIDTH, Title::HEIGHT + 1) {
         title.render(frame, Rect { width: Title::WIDTH, height: Title::HEIGHT, ..area }, palette);
@@ -621,9 +604,6 @@ fn render(frame: &mut Frame, game: &Game, view: &View) {
         render_help(frame, area, palette);
     }
 }
-
-// ---------------------------------------------------------------------------------------------
-// Title
 
 /// Theme colors only, so the shadow tracks light and dark backgrounds alike.
 const TITLE_SHADOW: Color = Color::DarkGray;
@@ -735,7 +715,6 @@ impl Title {
             frame.render_widget(canvas, area);
         }
 
-        // letter pixels are drawn two to a cell with half blocks; the shadow sits one pixel down and right
         let text = |r: usize, c: usize| title_pixel(r, c);
         let shadow = |r: usize, c: usize| palette.color && !text(r, c) && r > 0 && c > 0 && text(r - 1, c - 1);
         let buf = frame.buffer_mut();
@@ -778,12 +757,8 @@ fn rotate_about(v: [f64; 3], (a, b): (Point, Point), angle: f64) -> [f64; 3] {
     ]
 }
 
-// ---------------------------------------------------------------------------------------------
-// Clipboard
-
-/// Sends an OSC 52 escape, which most terminals take as a clipboard write and which also works
-/// over ssh, then tries the system's clipboard tool for terminals that ignore it (like macOS
-/// Terminal). Both fail silently: there's no way to tell whether the escape worked anyway.
+/// Sends an OSC 52 clipboard escape, which also works over ssh, then tries the system's clipboard
+/// tool; both fail silently.
 fn copy_to_clipboard(text: &str) {
     use std::io::Write;
     use std::process::{Command, Stdio};
@@ -812,9 +787,6 @@ fn base64(bytes: &[u8]) -> String {
     }
     out
 }
-
-// ---------------------------------------------------------------------------------------------
-// Main loop
 
 fn main() -> std::io::Result<()> {
     let Some((seed, level, day)) = parse_args(std::env::args().skip(1)) else {
@@ -850,7 +822,6 @@ fn parse_args(args: impl Iterator<Item = String>) -> Option<(Seed, Option<usize>
         level = l.or(level);
     }
     let (seed, day) = seed.unwrap_or_else(|| (Seed::daily(today()), Some(today())));
-    // a pasted code from today's daily gets its date too
     let day = day.or_else(|| (seed == Seed::daily(today())).then(today));
     Some((seed, level, day))
 }
@@ -870,7 +841,6 @@ fn app(terminal: &mut DefaultTerminal, seed: Seed, level: Option<usize>, day: Op
     let mut game = Game::new(seed, level, &scores);
     let date = day.map(format_day);
     let mut view = View { title: Title { started: Instant::now() }, palette, date, help: false };
-    // levels left with [ and ], to come back to as they were
     let mut shelf = BTreeMap::new();
     loop {
         game.tick();
@@ -884,12 +854,10 @@ fn app(terminal: &mut DefaultTerminal, seed: Seed, level: Option<usize>, day: Op
         if let Event::Key(key) = event::read()?
             && key.kind == KeyEventKind::Press
         {
-            // any key closes the help, and does only that, except quitting
             if view.help && !matches!(key.code, KeyCode::Char('q')) {
                 view.help = false;
                 continue;
             }
-            // any key but a second r drops a restart that's waiting
             let restart_asked = game.until_restart_lapses().is_some();
             game.restart_asked_at = None;
             match key.code {

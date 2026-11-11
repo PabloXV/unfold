@@ -1,35 +1,46 @@
 <script lang="ts">
-	import { onMount, untrack } from 'svelte';
+	import { onMount, tick, untrack } from 'svelte';
+	import { replaceState } from '$app/navigation';
 	import Board from '#lib/Board.svelte';
 	import Card from '#lib/Card.svelte';
 	import { Game } from '#lib/game.svelte.ts';
 	import { Attempt, dailyLevels, dailySeed, formatDay, loadCore, parseCode, today, type Point } from '#lib/unfold.ts';
-	import { bestMoves, firstUnsolved } from '#lib/scores.ts';
+	import { bestMoves } from '#lib/scores.ts';
+	import { forget, readJson, writeJson } from '#lib/storage.ts';
 	import { shareCard, shareText, squares, toPng, total, type Result } from '#lib/card.ts';
 
 	const RESTART_TIME = 2000;
 	const NOTICE_TIME = 1500;
+	const CARD_DELAY = 1500;
 
 	let game = $state.raw<Game | undefined>(undefined);
 	/** Set when playing a day's seed. */
 	let day = $state<number | undefined>(undefined);
-	/** The day's levels, in order, and the par of each; unset outside the daily. */
+	/** The day's levels in order; unset outside the daily. */
 	let ladder = $state.raw<number[] | undefined>(undefined);
 	let pars = $state.raw<number[]>([]);
-	/** Bumped whenever a score is recorded, so the day's result is worked out again. */
+	/** Bumped on every solve, so the day's result is worked out again. */
 	let scored = $state(0);
-	/** The share card, shown over the game once the day is done. */
 	let cardOpen = $state(false);
-	/** Dragging the card's corners to reshape it. */
 	let editing = $state(false);
-	/** The finished shape on the card, as reshaped, and as it first unfolded, to go back to. */
+	/** The card's shape as reshaped, and as it first unfolded. */
 	let corners = $state.raw<Point[] | undefined>(undefined);
 	let unfoldedCorners: Point[] | undefined;
 	let cardView = $state<Card | undefined>(undefined);
+	/** The card as a PNG, made ahead so sharing opens the share sheet right on the tap. */
+	let png: Promise<Blob> | undefined;
+	/** Shown only once the keyboard is used. */
+	let showCursor = $state(false);
+	let restartAsked = $state(false);
+	let notice = $state('');
+	let failed = $state(false);
+	/** Levels left with [ and ], kept as they were. */
+	const shelf = new Map<number, Game>();
+	let restartTimer: ReturnType<typeof setTimeout> | undefined;
+	let noticeTimer: ReturnType<typeof setTimeout> | undefined;
 
 	const rung = $derived(ladder && game ? ladder.indexOf(game.level) : -1);
 	const onLastRung = $derived(ladder !== undefined && rung === ladder.length - 1);
-	/** The day's moves per level, once every level is solved. */
 	const result = $derived.by((): Result | undefined => {
 		void scored;
 		if (!ladder || !game || day === undefined) return;
@@ -37,22 +48,15 @@
 		if (moves.some((m) => m === undefined)) return;
 		return { date: formatDay(day), moves: moves as number[], pars };
 	});
-	/** Only once the keyboard is used, so touch and mouse players never see a cursor. */
-	let showCursor = $state(false);
-	let restartAsked = $state(false);
-	let notice = $state('');
-	let failed = $state(false);
-	/** Levels left with [ and ], to come back to as they were. */
-	const shelf = new Map<number, Game>();
-	let restartTimer: ReturnType<typeof setTimeout> | undefined;
-	let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+
+	const here = () => location.origin + location.pathname;
+	const shapeKey = () => `unfold:shape:${day}`;
 
 	onMount(() => {
 		loadCore().then(
 			() => open(location.hash),
 			() => (failed = true)
 		);
-		// the game in play, for automated checks; left out of production builds
 		if (import.meta.env.DEV) Object.defineProperty(window, '__unfold', { get: () => game, configurable: true });
 		const onhash = () => {
 			if (location.hash.slice(1) !== game?.code) open(location.hash);
@@ -61,17 +65,24 @@
 		return () => removeEventListener('hashchange', onhash);
 	});
 
-	/**
-	 * A hash like #ABC123/9 opens that puzzle, with levels on from there; anything else, today's
-	 * daily, its five levels in a row, starting at the first not yet solved.
-	 */
+	$effect(() => {
+		if (game?.solved) untrack(() => scored++);
+	});
+
+	$effect(() => {
+		if (!result || !onLastRung || !game?.solved) return;
+		untrack(loadCorners);
+		const timer = setTimeout(() => (cardOpen = true), CARD_DELAY);
+		return () => clearTimeout(timer);
+	});
+
+	/** A hash like #ABC123/9 opens that puzzle; anything else, today's daily at its first unsolved level. */
 	function open(hash: string): void {
 		const code = parseCode(decodeURIComponent(hash.slice(1)));
 		const now = today();
 		let seed: number, level: number;
 		if (code) {
 			[seed, level] = [code[0], code[1]];
-			// a pasted code from today's daily gets its date too
 			day = seed === dailySeed(now) ? now : undefined;
 			ladder = undefined;
 		} else {
@@ -88,49 +99,26 @@
 		for (const g of shelf.values()) g.free();
 		shelf.clear();
 		game?.free();
-		game = Game.ofSeed(seed, level);
-		cardOpen = editing = false;
+		game = new Game(seed, level);
+		closeCard();
 		corners = undefined;
 		showUrl();
 	}
 
-	/** In the daily, the level `step` along its ladder; elsewhere, the next or previous level. */
+	/** The next or previous level, along the ladder in the daily. */
 	function neighbour(step: 1 | -1): number | undefined {
 		if (!game) return;
 		if (!ladder) return game.level + step >= 1 ? game.level + step : undefined;
 		return ladder[rung + step];
 	}
 
-	const shapeKey = () => `unfold:shape:${day}`;
-
-	/**
-	 * The finished shape for the card: as reshaped and saved, else as it lies on the board just
-	 * solved, else the flat sheet.
-	 */
+	/** The card's shape: as saved, else as just unfolded, else the flat sheet. */
 	function loadCorners(): void {
 		if (!game || !onLastRung) return;
 		unfoldedCorners = game.solved ? game.unfolded.map((p) => ({ ...p })) : game.sheet();
-		let saved: Point[] | undefined;
-		try {
-			saved = JSON.parse(localStorage.getItem(shapeKey()) ?? 'null') ?? undefined;
-		} catch {
-			// unreshaped will do
-		}
+		const saved = readJson<Point[]>(shapeKey());
 		corners = saved?.length === game.dots ? saved : unfoldedCorners;
 	}
-
-	// a solve records a score, which may finish the day
-	$effect(() => {
-		if (game?.solved) untrack(() => scored++);
-	});
-
-	// finishing the day pops the card up, once the paper has unfolded
-	$effect(() => {
-		if (!result || !onLastRung || !game?.solved) return;
-		untrack(() => loadCorners());
-		const timer = setTimeout(() => (cardOpen = true), 1500);
-		return () => clearTimeout(timer);
-	});
 
 	function openCard(): void {
 		if (!corners) loadCorners();
@@ -143,46 +131,48 @@
 
 	function saveCorners(next: Point[]): void {
 		corners = next;
-		try {
-			localStorage.setItem(shapeKey(), JSON.stringify(next.map((p) => ({ x: +p.x.toFixed(4), y: +p.y.toFixed(4) }))));
-		} catch {
-			// kept for this visit
-		}
+		writeJson(
+			shapeKey(),
+			next.map((p) => ({ x: +p.x.toFixed(4), y: +p.y.toFixed(4) }))
+		);
 	}
 
 	function resetShape(): void {
-		if (unfoldedCorners) saveCorners(unfoldedCorners);
-		try {
-			localStorage.removeItem(shapeKey());
-		} catch {
-			// nothing saved to forget
-		}
+		if (unfoldedCorners) corners = unfoldedCorners;
+		forget(shapeKey());
 	}
 
+	$effect(() => {
+		if (!cardOpen || !cardView) return;
+		void corners;
+		tick().then(() => {
+			const svg = cardView?.element();
+			if (svg) png = toPng(svg);
+		});
+	});
+
 	async function share(): Promise<void> {
-		const svg = cardView?.element();
-		if (!svg || !result) return;
+		if (!png || !result) return;
 		editing = false;
-		const outcome = await shareCard(await toPng(svg), shareText(result, location.origin + location.pathname));
+		const outcome = await shareCard(await png, shareText(result, here()));
 		if (outcome === 'copied') flash('card copied');
 		else if (outcome === 'downloaded') flash('card saved');
 	}
 
-	async function copyText(): Promise<void> {
-		if (!result) return;
+	/** Copies text, or shows it when the clipboard is blocked. */
+	async function copy(text: string, done: string): Promise<void> {
 		try {
-			await navigator.clipboard.writeText(shareText(result, location.origin + location.pathname));
-			flash('result copied');
+			await navigator.clipboard.writeText(text);
+			flash(done);
 		} catch {
-			flash(squares(result));
+			flash(text);
 		}
 	}
 
-	/** The daily keeps a clean address; any other seed shows its code, to bookmark or share. */
+	/** The daily keeps a clean address; any other seed shows its code. */
 	function showUrl(): void {
 		if (!game) return;
-		const url = day === undefined ? `#${game.code}` : location.pathname;
-		history.replaceState(history.state, '', url);
+		replaceState(day === undefined ? `#${game.code}` : location.pathname, {});
 	}
 
 	function jump(step: 1 | -1): void {
@@ -190,7 +180,7 @@
 		if (!game || level === undefined) return;
 		closeCard();
 		shelf.set(game.level, game);
-		game = shelf.get(level) ?? Game.ofSeed(game.seed, level);
+		game = shelf.get(level) ?? new Game(game.seed, level);
 		shelf.delete(level);
 		restartAsked = false;
 		showUrl();
@@ -209,7 +199,7 @@
 		closeCard();
 		const { seed, level } = game;
 		game.free();
-		game = Game.ofSeed(seed, level);
+		game = new Game(seed, level);
 	}
 
 	function flash(text: string): void {
@@ -218,37 +208,27 @@
 		noticeTimer = setTimeout(() => (notice = ''), NOTICE_TIME);
 	}
 
-	async function copyLink(): Promise<void> {
-		if (!game) return;
-		const url = `${location.origin}${location.pathname}#${game.code}`;
-		try {
-			await navigator.clipboard.writeText(url);
-			flash('link copied');
-		} catch {
-			flash(url);
-		}
-	}
-
 	function onkeydown(e: KeyboardEvent): void {
 		if (!game || e.metaKey || e.ctrlKey || e.altKey) return;
-		// the card, while it's up, takes the keyboard
 		if (cardOpen) {
 			if (e.key === 'Escape') closeCard();
 			return;
 		}
 		if (e.key !== 'r') restartAsked = false;
+		const g = game;
+		const select = () => (g.solved ? jump(1) : g.select());
 		const keys: Record<string, () => void> = {
-			ArrowLeft: () => game!.step(1),
-			h: () => game!.step(1),
-			ArrowRight: () => game!.step(-1),
-			l: () => game!.step(-1),
-			' ': () => (game!.solved ? jump(1) : game!.select()),
-			Enter: () => (game!.solved ? jump(1) : game!.select()),
-			Escape: () => game!.putBack(),
+			ArrowLeft: () => g.step(1),
+			h: () => g.step(1),
+			ArrowRight: () => g.step(-1),
+			l: () => g.step(-1),
+			' ': select,
+			Enter: select,
+			Escape: () => g.putBack(),
 			'[': () => jump(-1),
 			']': () => jump(1),
 			r: restart,
-			c: copyLink
+			c: () => copy(`${here()}#${g.code}`, 'link copied')
 		};
 		const act = keys[e.key];
 		if (!act) return;
@@ -322,7 +302,7 @@
 		<nav>
 			<button onclick={() => jump(-1)} disabled={neighbour(-1) === undefined} aria-label="Previous level">‹</button>
 			<button onclick={restart}>{game.solved ? 'replay' : 'restart'}</button>
-			<button onclick={copyLink}>copy link</button>
+			<button onclick={() => game && copy(`${here()}#${game.code}`, 'link copied')}>copy link</button>
 			<button class:primary={game.solved && !onLastRung} onclick={() => jump(1)} disabled={neighbour(1) === undefined} aria-label="Next level">
 				{game.solved && !onLastRung ? 'next level ›' : '›'}
 			</button>
@@ -366,7 +346,7 @@
 					<button onclick={resetShape}>reset</button>
 				{/if}
 				<button class="primary" onclick={share}>share</button>
-				<button onclick={copyText}>copy text</button>
+				<button onclick={() => result && copy(shareText(result, here()), 'result copied')}>copy text</button>
 			</nav>
 			{#if notice}<p class="hint">{notice}</p>{/if}
 		</div>
@@ -448,7 +428,6 @@
 		flex-direction: column;
 		align-items: center;
 		gap: 0.75rem;
-		/* room at the top for the close button, clear of the card */
 		padding: 2.75rem 1rem 1rem;
 		border-radius: 1.5rem;
 		background: var(--bg);

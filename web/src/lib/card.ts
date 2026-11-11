@@ -1,6 +1,3 @@
-// The share card: a day's finished shape on a postcard with the score, drawn by Card.svelte and
-// exported as a PNG, plus the same result as text, with the link people can tap.
-
 export type Result = {
 	/** Like "Nov 10". */
 	date: string;
@@ -9,7 +6,7 @@ export type Result = {
 	pars: number[];
 };
 
-/** The card's size in pixels, square, which suits every app it's shared to. */
+/** The card's width and height in pixels. */
 export const SIZE = 1080;
 
 /** Per level, Wordle style: 🟩 at par, 🟨 within two of it, ⬜ beyond. */
@@ -19,16 +16,13 @@ export function squares({ moves, pars }: Result): string {
 
 export const total = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 
-/** The result as text, ending with the link: shared alongside the card, it's what people tap. */
+/** The result as text ending with the link, which is what people tap. */
 export function shareText(result: Result, url: string): string {
 	const { moves, pars } = result;
 	return `unfold ${result.date}\n${squares(result)}\n${total(moves)} moves · par ${total(pars)}\n${url}`;
 }
 
-/**
- * The card as a PNG: its <svg> drawn onto a canvas. The svg has to carry its own colors, since an
- * image can't see the page's CSS; anything with the class `no-export` is left out.
- */
+/** The card's svg as a PNG, leaving out anything with the class `no-export`. */
 export async function toPng(svg: SVGSVGElement, size = SIZE): Promise<Blob> {
 	const copy = svg.cloneNode(true) as SVGSVGElement;
 	copy.querySelectorAll('.no-export').forEach((el) => el.remove());
@@ -49,10 +43,7 @@ export async function toPng(svg: SVGSVGElement, size = SIZE): Promise<Blob> {
 	}
 }
 
-/**
- * Shares the card the best way this browser can: the share sheet with the image and text on
- * phones, else the image on the clipboard, else a download.
- */
+/** Shares with the share sheet, else copies to the clipboard, else downloads. */
 export async function shareCard(blob: Blob, text: string): Promise<'shared' | 'copied' | 'downloaded' | 'cancelled'> {
 	const file = new File([blob], 'unfold.png', { type: 'image/png' });
 	if (navigator.canShare?.({ files: [file] })) {

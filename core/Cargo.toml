@@ -5,5 +5,4 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-# no system randomness, which wasm doesn't have: every puzzle comes from its seed
 rand = { workspace = true, features = ["alloc"] }

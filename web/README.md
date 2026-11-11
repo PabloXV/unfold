@@ -1,54 +1,18 @@
-# sv
+# unfold web
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
-
-## Creating a project
-
-If you're seeing this, you've probably already done this step. Congrats!
+The browser version: a static SvelteKit site with the puzzle logic from `../core`, compiled to wasm.
 
 ```sh
-# create a new project
-npx sv create my-app
+pnpm dev     # builds the wasm, then serves at localhost:5173
+pnpm build   # builds the wasm, then the static site into build/
+pnpm test    # checks the wasm makes the same puzzles as native
+pnpm check   # type checks
 ```
 
-To recreate this project with the same configuration:
+Needs Rust with the `wasm32-unknown-unknown` target, the `wasm-bindgen` CLI at the version pinned in
+`../wasm/Cargo.toml`, and `wasm-opt` (binaryen).
 
-```sh
-# recreate this project
-pnpm dlx sv@1.3.0 create --template minimal --types ts --add sveltekit-adapter="adapter:static" --install pnpm web
-```
-
-## Adding features
-
-Add features to your project with `sv add`:
-
-```sh
-npx sv add
-```
-
-For example, to add Tailwind CSS:
-
-```sh
-npx sv add tailwindcss
-```
-
-## Developing
-
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
-
-```sh
-npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
-```
-
-## Building
-
-To create a production version of your app:
-
-```sh
-npm run build
-```
-
-You can preview the production build with `npm run preview`.
+Deployed on Cloudflare from `main`: root directory `web`, build command `sh scripts/ci-build.sh`,
+output directory `build`, with `SKIP_DEPENDENCY_INSTALL=true` and `NODE_VERSION=26`.
+`scripts/ci-build.sh` installs the toolchain on a fresh Linux machine and refuses to deploy a wasm
+that makes different puzzles from native.

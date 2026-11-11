@@ -1,13 +1,5 @@
-"""Turns animal emoji into mystery-shape levels (a prototype since removed from the web game;
-its page and data are in git history before the removal, and core still has Puzzle::from_sheet).
-
-Each emoji (Google's Noto Emoji, Apache 2.0) is traced to its outline, simplified to a few
-corners per level, cut into the fattest triangles that outline allows, and each triangle is
-colored with the average of the emoji under it. Writes web/src/lib/mystery/shapes.json, and a
-contact sheet at tools/shapes/preview.html to check every animal at every level by eye.
-
-usage: uv run --with pillow --with numpy --with opencv-python-headless tools/shapes/make_shapes.py
-"""
+"""Traces Noto animal emoji into colored triangulated shapes, for the removed mystery mode.
+usage: uv run --with pillow --with numpy --with opencv-python-headless tools/shapes/make_shapes.py"""
 
 import base64
 import io
@@ -20,10 +12,8 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw
 
-# corners per level: guessable by about 9, the last one the full picture
 LEVEL_CORNERS = [5, 7, 9, 12, 16]
 
-# name, Noto codepoint, other names a guess may use
 ANIMALS = [
     ("fox", "1f98a", []),
     ("wolf", "1f43a", []),
@@ -94,14 +84,12 @@ ANIMALS = [
     ("seal", "1f9ad", ["sea lion"]),
 ]
 
-# traced, but still blobs or misleading at the last level: kept only as guessable names
 SKIP = {"sheep", "ram", "sloth", "dog", "octopus", "jellyfish", "crocodile"}
-# more names to guess from, so the list doesn't give away which animals can come up
 DECOYS = ["bear", "lion", "frog", "koala", "llama", "moose", "raccoon", "beaver", "ostrich", "toucan", "seahorse", "spider", "ant", "worm"]
 
 SIZE = 512
 HERE = Path(__file__).parent
-CACHE = HERE / ".cache"  # downloaded emoji, kept apart from code and out of git
+CACHE = HERE / ".cache"
 OUT = HERE.parent.parent / "web/src/lib/mystery/shapes.json"
 
 
@@ -177,8 +165,7 @@ def min_angle(a, b, c):
 
 
 def triangulate(poly):
-    """The triangulation whose thinnest triangle is fattest, by dynamic programming over
-    diagonals that lie inside the polygon."""
+    """The triangulation whose thinnest triangle is fattest, by dynamic programming."""
     n = len(poly)
 
     def diagonal(i, j):
@@ -235,7 +222,6 @@ def level(img, full, k):
     poly = simplify(full, k)
     tris, thinnest = triangulate(poly)
     return {
-        # y up, as the game draws it; the game recenters and rescales
         "corners": [round(v, 2) for x, y in poly for v in (x, SIZE - y)],
         "triangles": [v for t in tris for v in t],
         "colors": colors(img, poly, tris),

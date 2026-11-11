@@ -4,6 +4,5 @@
 		"strict": true
 	},
 	"include": ["src", "vite.config.ts"],
-	// wasm-bindgen's generated glue; its .d.ts files carry the types
 	"exclude": ["src/lib/wasm/*.js"]
 }

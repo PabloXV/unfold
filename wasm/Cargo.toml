@@ -9,5 +9,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 unfold-core.workspace = true
-# pinned exactly: the wasm-bindgen CLI that generates the JS glue has to be this same version
 wasm-bindgen = "=0.2.130"

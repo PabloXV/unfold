@@ -7,7 +7,5 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace.dependencies]
-# Pinned exactly: a seed's puzzles depend on how rand samples and shuffles, so any upgrade has to
-# pass core's fingerprint tests first.
 rand = { version = "=0.10.3", default-features = false }
 unfold-core = { path = "core" }

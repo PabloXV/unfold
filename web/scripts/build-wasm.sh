@@ -1,9 +1,12 @@
 #!/bin/sh
-# Builds unfold-core for the browser into src/lib/wasm: cargo compiles it to wasm, wasm-bindgen
-# writes the JS that loads it, and wasm-opt shrinks it.
 set -eu
 cd "$(dirname "$0")/.."
 out=src/lib/wasm
+want=$(sed -n 's/^wasm-bindgen = "=\(.*\)"$/\1/p' ../wasm/Cargo.toml)
+if [ "$(wasm-bindgen --version)" != "wasm-bindgen $want" ]; then
+	echo "need wasm-bindgen $want: cargo install wasm-bindgen-cli --version $want --locked" >&2
+	exit 1
+fi
 
 cargo build --quiet -p unfold-wasm --release --target wasm32-unknown-unknown
 wasm-bindgen ../target/wasm32-unknown-unknown/release/unfold_wasm.wasm --target web --out-dir "$out"

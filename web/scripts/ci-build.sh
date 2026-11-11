@@ -1,20 +1,13 @@
 #!/bin/sh
-# Builds the site from a fresh Linux machine, such as Cloudflare Pages' builder: installs Rust
-# with the wasm target and the exact wasm-bindgen and wasm-opt the project uses, builds, then
-# refuses to deploy a wasm that doesn't make the same puzzles as native.
-#
-# Cloudflare Pages settings: root directory "web", build command "sh scripts/ci-build.sh",
-# output directory "build".
 set -eu
 cd "$(dirname "$0")/.."
 
-WASM_BINDGEN=0.2.130 # must match wasm-bindgen in wasm/Cargo.toml
+WASM_BINDGEN=$(sed -n 's/^wasm-bindgen = "=\(.*\)"$/\1/p' ../wasm/Cargo.toml)
+PNPM=$(node -p "require('./package.json').packageManager.split('@')[1]")
 BINARYEN=133
-PNPM=12.18.0 # must match packageManager in package.json
 
 tools="${TMPDIR:-/tmp}/unfold-tools"
 mkdir -p "$tools/bin"
-# ours first, ahead of any older pnpm the machine came with
 export PATH="$tools/bin:$tools/node_modules/.bin:$HOME/.cargo/bin:$PATH"
 
 if ! command -v rustup >/dev/null 2>&1; then

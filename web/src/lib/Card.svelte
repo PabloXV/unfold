@@ -1,12 +1,7 @@
-<!--
-	The share card: the day's finished shape on a postcard with the score. It's also where the
-	shape is reshaped before sharing: with `editing`, its corners can be dragged anywhere, and a
-	flap pulled over shows the paper's other side. Drawn as one <svg> with its own colors, so it
-	exports to a PNG looking exactly as it does here, shadows and all.
--->
 <script lang="ts">
 	import Paper from './Paper.svelte';
 	import { SIZE, squares, total, type Result } from './card';
+	import { nearestTo, svgPoint, trianglePath } from './geometry';
 	import type { Point } from './unfold';
 
 	let {
@@ -21,85 +16,64 @@
 		result: Result;
 		flaps: number[][];
 		faceUp: number[];
-		/** Where each corner is, in board units; reshaping replaces it. */
+		/** Where each corner is, in board units. */
 		corners: Point[];
 		host: string;
+		/** Lets the corners be dragged anywhere. */
 		editing?: boolean;
-		/** The corners after each reshaping drag. */
 		onchange?: (corners: Point[]) => void;
 	} = $props();
 
-	let svg = $state<SVGSVGElement | undefined>(undefined);
-
-	/** The paper's middle and size on the card, fixed so a dragged corner doesn't rescale it. */
+	/** The paper's middle and scale on the card, fixed so a dragged corner doesn't rescale it. */
 	const CX = SIZE / 2;
 	const CY = 500;
 	const SCALE = 280;
-	/** How far from the middle a corner can be dragged, in board units, keeping it on the card. */
+	/** How far from the middle a corner can be dragged, and how near a press must be to grab one. */
 	const REACH = 1.15;
-	/** How near a press has to be to a corner to drag it, in board units. */
 	const GRAB = 0.22;
-
-	// colors written out, since the exported image can't see the page's CSS
-	const css = typeof document === 'undefined' ? undefined : getComputedStyle(document.documentElement);
-	const read = (name: string, fallback: string) => css?.getPropertyValue(name).trim() || fallback;
-	const PAPER = {
-		front: read('--paper-front', '#d9473f'),
-		back: read('--paper-back', '#f2c14e'),
-		cast: 'rgb(60 45 25)',
-		castStep: '0.032'
-	};
 	const INK = '#2a2723';
 	const MUTED = '#7a736a';
 	const FONT = 'ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", sans-serif';
 	const SQUARE_COLORS: Record<string, string> = { '🟩': '#2f7d6d', '🟨': '#d9a23a', '⬜': '#d9d2c5' };
-
-	// where the corners are drawn: the prop, then each drag, until the prop changes again
-	let pos = $state.raw<Point[]>([]);
-	$effect.pre(() => {
-		pos = corners;
-	});
-	let dragging = $state<number | undefined>(undefined);
-
-	const marks = $derived([...squares(result)]);
 	const SQ = 56;
 	const GAP = 16;
 
-	/** The whole sheet as one path, for the shadow it casts on the card. */
-	const silhouette = $derived(
-		flaps
-			.map((f) => {
-				const [a, b, c] = f.map((v) => pos[v]);
-				return `M${a.x} ${-a.y}L${b.x} ${-b.y}L${c.x} ${-c.y}Z`;
-			})
-			.join('')
-	);
+	const css = getComputedStyle(document.documentElement);
+	const PAPER = {
+		front: css.getPropertyValue('--paper-front').trim() || '#d9473f',
+		back: css.getPropertyValue('--paper-back').trim() || '#f2c14e',
+		cast: 'rgb(60 45 25)',
+		castStep: '0.032'
+	};
+
+	let svg = $state<SVGSVGElement | undefined>(undefined);
+	let pos = $state.raw<Point[]>([]);
+	let dragging = $state<number | undefined>(undefined);
+
+	$effect.pre(() => {
+		pos = corners;
+	});
+
+	const marks = $derived([...squares(result)]);
+	const silhouette = $derived(flaps.map((f) => trianglePath(f.map((v) => pos[v]))).join(''));
 
 	function cardPoint(e: PointerEvent): Point {
-		const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(svg!.getScreenCTM()!.inverse());
-		return { x: (p.x - CX) / SCALE, y: -(p.y - CY) / SCALE };
+		const p = svgPoint(svg!, e);
+		return { x: (p.x - CX) / SCALE, y: (p.y + CY) / SCALE };
 	}
 
 	function onpointerdown(e: PointerEvent): void {
 		if (!editing || e.button > 0) return;
-		const p = cardPoint(e);
-		let best: number | undefined;
-		let bestDist = GRAB;
-		pos.forEach((q, v) => {
-			const d = Math.hypot(q.x - p.x, q.y - p.y);
-			if (d < bestDist) [best, bestDist] = [v, d];
-		});
-		if (best === undefined) return;
+		dragging = nearestTo(pos, cardPoint(e), GRAB);
+		if (dragging === undefined) return;
 		e.preventDefault();
 		svg!.setPointerCapture(e.pointerId);
-		dragging = best;
 	}
 
 	function onpointermove(e: PointerEvent): void {
 		if (dragging === undefined) return;
 		const p = cardPoint(e);
-		const r = Math.hypot(p.x, p.y);
-		const k = r > REACH ? REACH / r : 1;
+		const k = Math.min(1, REACH / Math.hypot(p.x, p.y));
 		pos = pos.map((q, v) => (v === dragging ? { x: p.x * k, y: p.y * k } : q));
 	}
 
@@ -109,7 +83,6 @@
 		onchange?.(pos);
 	}
 
-	/** The card's <svg>, for exporting. */
 	export function element(): SVGSVGElement | undefined {
 		return svg;
 	}
@@ -128,7 +101,6 @@
 	onpointercancel={onpointerup}
 >
 	<defs>
-		<!-- the sheet's shadow on the card: drawn once, so a blur is fine here -->
 		<filter id="card-shadow" x="-25%" y="-25%" width="150%" height="150%">
 			<feGaussianBlur in="SourceAlpha" stdDeviation="0.02" />
 			<feOffset dx="0.02" dy="0.04" result="blur" />

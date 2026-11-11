@@ -1,6 +1,5 @@
-//! The puzzle itself: seeds, level generation, the rules and the geometry under them. Nothing
-//! here draws, reads input or looks at a clock, so it builds the same for the terminal and for
-//! wasm, and a seed gives the same puzzles in both.
+//! The puzzle: seeds, level generation, the rules, and the geometry under them.
+//! No drawing, input or clock, so a seed makes the same puzzles natively and in wasm.
 
 use rand::rngs::Xoshiro256PlusPlus;
 use rand::seq::SliceRandom;
@@ -16,9 +15,6 @@ pub const DAILY_LEVELS: [usize; 5] = [2, 4, 6, 8, 10];
 
 /// Chance that a new flap grows off the newest one: higher makes snakes, lower makes blobs.
 const STRIP_BIAS: f64 = 0.6;
-
-// ---------------------------------------------------------------------------------------------
-// Seeds and codes
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Seed(pub u32);
@@ -94,7 +90,6 @@ pub fn parse_day(s: &str, today: u64) -> Option<u64> {
     if !(1970..=9999).contains(&y) || !(1..=12).contains(&m) || d == 0 {
         return None;
     }
-    // a day past the end of its month comes back as a different date
     let day = days_from_civil(y, m, d);
     (civil_from_days(day) == (y, m, d)).then_some(day)
 }
@@ -108,9 +103,6 @@ pub fn parse_code(s: &str) -> Option<(Seed, usize)> {
     let (seed, level) = s.split_once('/')?;
     Some((Seed::parse(seed)?, parse_level(level)?))
 }
-
-// ---------------------------------------------------------------------------------------------
-// The puzzle
 
 pub struct Edge {
     pub a: usize,
@@ -143,10 +135,8 @@ impl Puzzle {
         Self::fold(seed, level, shape, flaps, rng)
     }
 
-    /// A level from a sheet drawn elsewhere: `shape` lists the corners of a simple polygon in
-    /// order around its outline, and `flaps` cuts it into triangles corner to corner. The seed
-    /// only decides how it's stacked and scrambled. Any such sheet makes a solvable puzzle, since
-    /// a triangulated polygon lies flat around a circle in exactly one order, its outline's.
+    /// A level from a drawn sheet: a simple polygon's corners in outline order, cut into `flaps`.
+    /// The seed only decides how it's stacked and scrambled.
     pub fn from_sheet(seed: Seed, level: usize, shape: Vec<Point>, flaps: Vec<[usize; 3]>) -> Self {
         Self::fold(seed, level, shape, flaps, seed.rng(level))
     }
@@ -156,8 +146,6 @@ impl Puzzle {
         let n = shape.len();
         flaps.shuffle(&mut rng);
         let mut puzzle = Puzzle { seed, level, edges: edges_of(&flaps), flaps, shape, start: (0..n).collect() };
-        // always shuffle at least once: vertices are numbered in outline or growth order, either of
-        // which gives the puzzle away
         loop {
             puzzle.start.shuffle(&mut rng);
             if puzzle.crossings(&puzzle.start) > 0 {
@@ -211,11 +199,8 @@ impl Puzzle {
         order
     }
 
-    /// The fewest moves that solve the puzzle from `slot_of`. A move takes one dot out and puts it
-    /// back anywhere, so dots never moved keep their order around the circle, and the solution
-    /// keeps the outline's order. The dots left alone can be at most the longest run, in circle
-    /// order, that already sits in outline order (either way round); every other dot needs one
-    /// move, and one each is enough.
+    /// The fewest moves that solve the puzzle from `slot_of`: every dot outside the longest run
+    /// already in outline order, either way round, needs one move, and one each is enough.
     pub fn fewest_moves(&self, slot_of: &[usize]) -> usize {
         let n = self.dots();
         let outline = self.outline();
@@ -231,7 +216,6 @@ impl Puzzle {
         for reverse in [false, true] {
             let target = |v: usize| if reverse { (n - place[v]) % n } else { place[v] };
             for first in 0..n {
-                // places along the outline from the first kept dot, read in circle order
                 let seq = (0..n).map(|i| (target(around[(first + i) % n]) + n - target(around[first])) % n);
                 longest = longest.max(longest_increasing(seq));
             }
@@ -244,7 +228,6 @@ impl Puzzle {
     pub fn unfold_target(&self, slot_of: &[usize]) -> Vec<Point> {
         let n = self.shape.len();
         let mean = self.shape.iter().fold(Point::ZERO, |s, &p| s + p) * (1.0 / n as f64);
-        // as complex numbers, the best rotation is the angle of sum(circle * conj(shape))
         let fit = |flip: f64| {
             let pts: Vec<Point> = self.shape.iter().map(|&p| p - mean).map(|p| Point::new(p.x * flip, p.y)).collect();
             let (re, im) = pts.iter().enumerate().fold((0.0, 0.0), |(re, im), (v, &s)| {
@@ -274,9 +257,6 @@ fn fit_unit_circle(pts: Vec<Point>) -> Vec<Point> {
     pts.iter().map(|&p| (p - center) * (1.0 / radius)).collect()
 }
 
-// ---------------------------------------------------------------------------------------------
-// Playing
-
 /// A dot picked up and walked around the circle, pushing the others along one slot at a time.
 struct Carry {
     v: usize,
@@ -284,9 +264,8 @@ struct Carry {
     before: Vec<usize>,
 }
 
-/// One go at a puzzle, from its scrambled start until solved; restarting begins a new one. A move
-/// is picking a dot up, carrying it along the circle, and setting it down somewhere new, and the
-/// puzzle is solved when a move leaves no creases crossing.
+/// One go at a puzzle until solved: a move picks a dot up, carries it along the circle, and sets
+/// it down somewhere new.
 pub struct Attempt {
     pub puzzle: Puzzle,
     slot_of: Vec<usize>,
@@ -306,7 +285,7 @@ impl Attempt {
     }
 
     pub fn vertex_at(&self, slot: usize) -> usize {
-        self.slot_of.iter().position(|&s| s == slot).unwrap()
+        vertex_at(&self.slot_of, slot)
     }
 
     pub fn moves(&self) -> usize {
@@ -372,16 +351,18 @@ impl Attempt {
 /// Vertex v trades places with the dot one slot over, +1 counterclockwise, -1 clockwise.
 fn step_slots(slot_of: &mut [usize], v: usize, dir: isize) {
     let n = slot_of.len() as isize;
-    let next = (slot_of[v] as isize + dir).rem_euclid(n) as usize;
-    let w = slot_of.iter().position(|&s| s == next).unwrap();
+    let w = vertex_at(slot_of, (slot_of[v] as isize + dir).rem_euclid(n) as usize);
     slot_of.swap(v, w);
+}
+
+fn vertex_at(slot_of: &[usize], slot: usize) -> usize {
+    slot_of.iter().position(|&s| s == slot).unwrap()
 }
 
 /// The dots on either side of v, counterclockwise first.
 fn neighbors(slot_of: &[usize], v: usize) -> (usize, usize) {
     let n = slot_of.len();
-    let at = |slot: usize| slot_of.iter().position(|&s| s == slot % n).unwrap();
-    (at(slot_of[v] + 1), at(slot_of[v] + n - 1))
+    (vertex_at(slot_of, (slot_of[v] + 1) % n), vertex_at(slot_of, (slot_of[v] + n - 1) % n))
 }
 
 fn edges_of(flaps: &[[usize; 3]]) -> Vec<Edge> {
@@ -426,9 +407,6 @@ pub fn chords_cross((a, b): (usize, usize), (c, d): (usize, usize)) -> bool {
     let between = |v: usize| a.min(b) < v && v < a.max(b);
     between(c) != between(d)
 }
-
-// ---------------------------------------------------------------------------------------------
-// Level generation
 
 /// Grows a flat sheet of triangles by folding each new one out from an outline edge,
 /// giving a triangulated polygon of any outline, not just a convex one.
@@ -499,9 +477,6 @@ fn fits(pts: &[Point], tris: &[[usize; 3]], apex: Point, p: Point, q: Point) -> 
             })
     })
 }
-
-// ---------------------------------------------------------------------------------------------
-// Geometry
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Point {
@@ -574,17 +549,22 @@ pub fn side(u: Point, v: Point, p: Point) -> f64 {
 }
 
 /// Strictly inside, so points on the border don't count.
-pub fn inside(&[a, b, c]: &[Point; 3], p: Point) -> bool {
-    let (d1, d2, d3) = (side(a, b, p), side(b, c, p), side(c, a, p));
-    let eps = 1e-9;
-    (d1 > eps && d2 > eps && d3 > eps) || (d1 < -eps && d2 < -eps && d3 < -eps)
+pub fn inside(tri: &[Point; 3], p: Point) -> bool {
+    let s = sides(tri, p);
+    s.iter().all(|&d| d > EPS) || s.iter().all(|&d| d < -EPS)
 }
 
 /// Inside or on the border.
-pub fn touches(&[a, b, c]: &[Point; 3], p: Point) -> bool {
-    let s = [side(a, b, p), side(b, c, p), side(c, a, p)];
-    let eps = 1e-9;
-    s.iter().all(|&d| d >= -eps) || s.iter().all(|&d| d <= eps)
+pub fn touches(tri: &[Point; 3], p: Point) -> bool {
+    let s = sides(tri, p);
+    s.iter().all(|&d| d >= -EPS) || s.iter().all(|&d| d <= EPS)
+}
+
+const EPS: f64 = 1e-9;
+
+/// Which side of each of a triangle's edges p lies on.
+fn sides(&[a, b, c]: &[Point; 3], p: Point) -> [f64; 3] {
+    [side(a, b, p), side(b, c, p), side(c, a, p)]
 }
 
 fn segments_cross((a, b): (Point, Point), (c, d): (Point, Point)) -> bool {
@@ -607,8 +587,6 @@ fn segment_dist(p: Point, (a, b): (Point, Point)) -> f64 {
     let t = ((p - a).dot(d) / d.dot(d)).clamp(0.0, 1.0);
     a.lerp(b, t).dist(p)
 }
-
-// ---------------------------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -718,7 +696,6 @@ mod tests {
                 let mut slots = attempt.slot_of().to_vec();
                 slots.sort();
                 assert_eq!(slots, (0..n).collect::<Vec<_>>());
-                // unsolved going in, since the loop stops at a solve
                 assert_eq!(attempt.solved(), counted && attempt.crossings() == 0);
                 if attempt.solved() {
                     break;
@@ -741,20 +718,16 @@ mod tests {
         assert_eq!(p.edges.len(), 2 * 6 - 3);
         assert!(p.crossings(&p.start) > 0);
         assert_eq!(p.crossings(&(0..6).collect::<Vec<_>>()), 0, "outline order is the solution");
-        // upright keeps the drawing's orientation, only moved and scaled into the unit circle
         let up = p.upright();
         assert!((up[0].x - 1.0).abs() < 1e-12 && up[0].y.abs() < 1e-12, "{:?}", up[0]);
         assert!(up.iter().all(|q| q.dist(Point::ZERO) <= 1.0 + 1e-12));
     }
 
-    /// Par against a breadth-first search over every arrangement, using the game's own moves (pick
-    /// a dot up, step it any distance either way) and its own test for solved (no crossings), so
-    /// it checks the outline argument as well as the arithmetic.
+    /// Par against breadth-first search over every arrangement, with the game's own moves and its
+    /// own test for solved.
     #[test]
     fn par_is_the_fewest_moves() {
         use std::collections::{HashMap, VecDeque};
-        // crossings depend only on the order around the circle, so arrangements are compared
-        // with vertex 0 turned to slot 0
         let canon = |slot_of: &[usize]| -> Vec<usize> {
             let n = slot_of.len();
             slot_of.iter().map(|&s| (s + n - slot_of[0]) % n).collect()
@@ -805,7 +778,6 @@ mod tests {
                 let (a, b) = (o[i].min(o[(i + 1) % o.len()]), o[i].max(o[(i + 1) % o.len()]));
                 assert!(p.edges.iter().any(|e| (e.a, e.b) == (a, b) && !e.shared));
             }
-            // laid out in outline order, nothing crosses and no moves are needed
             let mut slot_of = vec![0; p.dots()];
             for (i, &v) in o.iter().enumerate() {
                 slot_of[v] = i;

@@ -1,69 +1,46 @@
-// One attempt at a level, as reactive state for the page. The rules all live in the wasm
-// Attempt; this mirrors its state into runes after every change so Svelte can redraw, and adds
-// the cursor, which only keyboard play needs.
-import { Attempt, type Edge, type Point } from './unfold';
+import { points, turn } from './geometry';
 import { bestMoves, record } from './scores';
+import { Attempt, type Edge, type Point } from './unfold';
 
+/** One attempt at a level as reactive state, mirroring the wasm Attempt after every change. */
 export class Game {
 	readonly seed: number;
 	readonly level: number;
 	readonly code: string;
 	readonly dots: number;
 	/** Vertex triples, stacked bottom to top. */
-	readonly flaps: [number, number, number][];
+	readonly flaps: number[][];
 	readonly edges: Edge[];
 	readonly priorBest: number | undefined;
-	/** The fewest moves this level can be solved in. */
 	readonly par: number;
-	/**
-	 * Per flap, which way round its corners run on the flat sheet, as the sign of its area. A
-	 * flap drawn the other way round shows the back of the paper.
-	 */
+	/** Per flap, the sign of its area on the flat sheet; drawn the other way round, it shows its back. */
 	readonly faceUp: number[];
 
 	slots = $state<number[]>([]);
 	moves = $state(0);
 	solved = $state(false);
 	carried = $state<number | undefined>(undefined);
-	crossingPairs = $state<[number, number][]>([]);
-	/** The slot keyboard play is on. Follows the carried dot. */
+	crossingPairs = $state<number[][]>([]);
+	/** The slot keyboard play is on, which follows the carried dot. */
 	cursor = $state(0);
-	/** When the solve happened, by performance.now(), to time the unfold from. */
+	/** When the solve happened, by performance.now(). */
 	solvedAt = $state<number | undefined>(undefined);
 	/** Where each vertex unfolds to once solved. */
 	unfolded: Point[] = [];
 
 	#attempt: Attempt;
-	/** Unfold the way up the sheet was drawn, rather than turned to match the circle. */
-	#upright: boolean;
-	#keepScores: boolean;
 
-	/** A level grown from a seed, with its best score kept in this browser. */
-	static ofSeed(seed: number, level: number): Game {
-		return new Game(new Attempt(seed, level), { keepScores: true });
-	}
-
-	constructor(attempt: Attempt, { upright = false, keepScores = false } = {}) {
-		this.#attempt = attempt;
-		this.#upright = upright;
-		this.#keepScores = keepScores;
-		const { seed, level } = attempt;
+	constructor(seed: number, level: number) {
+		this.#attempt = new Attempt(seed, level);
 		this.seed = seed;
 		this.level = level;
 		this.code = this.#attempt.code;
 		this.dots = this.#attempt.dots;
-		const f = this.#attempt.flaps();
-		this.flaps = Array.from({ length: f.length / 3 }, (_, i) => [f[3 * i], f[3 * i + 1], f[3 * i + 2]]);
-		const e = this.#attempt.edges();
-		this.edges = Array.from({ length: e.length / 4 }, (_, i) => ({
-			a: e[4 * i],
-			b: e[4 * i + 1],
-			topFlap: e[4 * i + 2],
-			shared: e[4 * i + 3] === 1
-		}));
-		this.priorBest = keepScores ? bestMoves(seed, level) : undefined;
-		this.par = attempt.par;
-		const sheet = pairs(attempt.shape());
+		this.flaps = groups(this.#attempt.flaps(), 3);
+		this.edges = groups(this.#attempt.edges(), 4).map(([a, b, topFlap, shared]) => ({ a, b, topFlap, shared: shared === 1 }));
+		this.priorBest = bestMoves(seed, level);
+		this.par = this.#attempt.par;
+		const sheet = points(this.#attempt.shape());
 		this.faceUp = this.flaps.map((f) => Math.sign(turn(f.map((v) => sheet[v]))));
 		this.#sync();
 	}
@@ -100,14 +77,14 @@ export class Game {
 		if (this.carried !== undefined) this.cursor = this.slots[this.carried];
 	}
 
-	/** +1 counterclockwise, -1 clockwise. A carried dot comes along. */
+	/** +1 counterclockwise, -1 clockwise; a carried dot comes along. */
 	step(dir: 1 | -1): void {
 		if (this.carrying) this.#attempt.step(dir);
 		this.cursor = (this.cursor + dir + this.dots) % this.dots;
 		this.#sync();
 	}
 
-	/** Carries the carried dot to a slot, the short way round, one slot at a time. */
+	/** Carries the carried dot to a slot the short way round, one slot at a time. */
 	carryTo(slot: number): void {
 		if (this.carried === undefined) return;
 		for (let guard = 0; guard < this.dots; guard++) {
@@ -124,9 +101,9 @@ export class Game {
 		const counted = this.#attempt.setDown();
 		this.#sync();
 		if (counted && this.solved) {
-			this.unfolded = pairs(this.#upright ? this.#attempt.upright() : this.#attempt.unfoldTarget());
+			this.unfolded = points(this.#attempt.unfoldTarget());
 			this.solvedAt = performance.now();
-			if (this.#keepScores) record(this.seed, this.level, this.moves);
+			record(this.seed, this.level, this.moves);
 		}
 	}
 
@@ -144,10 +121,10 @@ export class Game {
 
 	/** The flat sheet fitted into the unit circle, the way it was drawn. */
 	sheet(): Point[] {
-		return pairs(this.#attempt.upright());
+		return points(this.#attempt.upright());
 	}
 
-	/** Releases the wasm side. The game can't be used after. */
+	/** Releases the wasm side; the game can't be used after. */
 	free(): void {
 		this.#attempt.free();
 	}
@@ -158,16 +135,10 @@ export class Game {
 		this.moves = a.moves;
 		this.solved = a.solved;
 		this.carried = a.carried;
-		const c = a.crossingPairs();
-		this.crossingPairs = Array.from({ length: c.length / 2 }, (_, i) => [c[2 * i], c[2 * i + 1]]);
+		this.crossingPairs = groups(a.crossingPairs(), 2);
 	}
 }
 
-/** Twice a triangle's signed area: positive when its corners run counterclockwise. */
-export function turn([a, b, c]: Point[]): number {
-	return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-}
-
-function pairs(xy: Float64Array): Point[] {
-	return Array.from({ length: xy.length / 2 }, (_, i) => ({ x: xy[2 * i], y: xy[2 * i + 1] }));
+function groups(flat: ArrayLike<number>, size: number): number[][] {
+	return Array.from({ length: flat.length / size }, (_, i) => Array.from({ length: size }, (_, j) => flat[size * i + j]));
 }

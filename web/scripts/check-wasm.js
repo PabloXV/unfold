@@ -1,5 +1,3 @@
-// Checks that the wasm build makes exactly the puzzles the native build does, by the same
-// fingerprints as core's seeds_make_the_same_puzzles test. Run after scripts/build-wasm.sh.
 import { readFileSync } from 'node:fs';
 import { initSync, Attempt, dailySeed } from '../src/lib/wasm/unfold_wasm.js';
 
