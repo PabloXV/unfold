@@ -135,7 +135,7 @@
 		void [corners, order, locale()];
 		tick().then(() => {
 			const svg = cardView?.element();
-			if (svg) png = toPng(svg).then((card) => toStoryPng(card, paper[0], paper[1], location.host, 'mosaic'));
+			if (svg) png = toPng(svg).then((card) => toStoryPng(card, paper[0], paper[1], location.host));
 		});
 	});
 
