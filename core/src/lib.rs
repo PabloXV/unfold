@@ -63,8 +63,8 @@ impl fmt::Display for Seed {
 
 /// A random stream for colors, apart from every level's.
 const PAPER_STREAM: u64 = 0xFFFF_FFFF;
-/// How far apart in OKLab the two sides must be: about seven times a just-noticeable difference.
-const MIN_SIDE_DISTANCE: f64 = 0.15;
+/// How far apart in OKLab the two sides must be: about ten times a just-noticeable difference.
+const MIN_SIDE_DISTANCE: f64 = 0.2;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Color {
@@ -88,22 +88,22 @@ struct Oklch {
 }
 
 impl Oklch {
-    /// Any hue, low chroma, mid to light; reds and oranges kept light so they don't turn brown,
-    /// and yellows light and bright so they don't turn khaki.
+    /// Any hue and lightness, at 20 to 70% of the most colorful a screen can show there, so never neon.
     fn paper(rng: &mut impl Rng) -> Self {
-        loop {
-            let h = rng.random_range(0.0..360.0);
-            let (l, c) = match h {
-                20.0..50.0 => (rng.random_range(0.70..0.86), rng.random_range(0.05..0.10)),
-                50.0..75.0 => (rng.random_range(0.78..0.88), rng.random_range(0.05..0.10)),
-                75.0..120.0 => (rng.random_range(0.82..0.90), rng.random_range(0.07..0.11)),
-                _ => (rng.random_range(0.58..0.84), rng.random_range(0.05..0.10)),
-            };
-            let color = Oklch { l, c, h };
-            if color.srgb().is_some() {
-                return color;
-            }
+        let h = rng.random_range(0.0..360.0);
+        let l = rng.random_range(0.35..0.93);
+        let c = Oklch::max_chroma(l, h) * rng.random_range(0.2..0.7);
+        Oklch { l, c, h }
+    }
+
+    /// The most colorful a screen can show at this lightness and hue, by bisection.
+    fn max_chroma(l: f64, h: f64) -> f64 {
+        let (mut lo, mut hi) = (0.0, 0.4);
+        for _ in 0..24 {
+            let mid = (lo + hi) / 2.0;
+            if (Oklch { l, c: mid, h }).srgb().is_some() { lo = mid } else { hi = mid }
         }
+        lo
     }
 
     fn lab(self) -> [f64; 3] {
