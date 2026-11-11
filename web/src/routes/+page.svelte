@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, tick, untrack } from 'svelte';
+	import { fly } from 'svelte/transition';
 	import { replaceState } from '$app/navigation';
 	import Board from '#lib/Board.svelte';
 	import Card from '#lib/Card.svelte';
@@ -17,6 +18,9 @@
 	const RESTART_TIME = 2000;
 	const NOTICE_TIME = 1500;
 	const CARD_DELAY = 1500;
+	/** After a solve, time to watch the paper unfold before the next level slides in. */
+	const ADVANCE_DELAY = 2400;
+	const SLIDE_TIME = 380;
 	const RESHAPED_KEY = 'unfold:reshaped';
 	const BACKDROPS = { light: [LIGHT.bg, LIGHT.spot], dark: [DARK.bg, DARK.spot] };
 
@@ -25,8 +29,10 @@
 	let day = $state<number | undefined>(undefined);
 	/** The day's run, while playing a day's seed. */
 	let run = $state.raw<Run | undefined>(undefined);
-	/** The run's last level, which the card shows. */
-	let cardShape = $state.raw<{ flaps: number[][]; faceUp: number[]; unfolded: Point[] } | undefined>(undefined);
+	/** The solved level the card shows, as it unfolded. */
+	let cardShape = $state.raw<{ level: number; flaps: number[][]; faceUp: number[]; unfolded: Point[] } | undefined>(undefined);
+	/** Which way the board slides when the level changes: 1 to the next, -1 back, 0 in place. */
+	let slide = $state<1 | -1 | 0>(0);
 	let paper = $state.raw<string[]>([]);
 	let dark = $state(false);
 	let cardOpen = $state(false);
@@ -49,25 +55,28 @@
 	/** Levels left with [ and ], kept as they were. */
 	const shelf = new Map<number, Game>();
 	let restartTimer: ReturnType<typeof setTimeout> | undefined;
+	let advanceTimer: ReturnType<typeof setTimeout> | undefined;
 	let noticeTimer: ReturnType<typeof setTimeout> | undefined;
 
 	const daily = $derived(game !== undefined && day !== undefined && run !== undefined && game.seed === dailySeed(day));
 	/** Whether this is the level the run is on, whose moves count against the budget. */
 	const atFrontier = $derived(daily && !finished(run!) && game!.level === frontier(run!));
+	/** The run so far, for the card and share text. */
 	const result = $derived.by((): Result | undefined => {
-		if (!daily || !run || !finished(run)) return;
-		return { date: formatDay(day!, locale()), level: run.solved.length, overs: overs(run), grid: grid(run), streak: streak(day!) };
+		if (!daily || !run || !run.solved.length) return;
+		const spare = finished(run) ? undefined : BUDGET - spent(run);
+		return { date: formatDay(day!, locale()), level: run.solved.length, overs: overs(run), grid: grid(run), streak: streak(day!), spare };
 	});
-	/** Whether there's more than one level to move between. */
-	const levels = $derived(game !== undefined && (!daily || frontier(run!) > 1));
+	/** Whether the level on the board has been solved in today's run, which is what can be shared. */
+	const shareable = $derived(daily && game!.level <= run!.solved.length);
 	const streakDays = $derived(daily && run ? streak(day!) : 0);
 	/** Extra moves left in the run, counting the level being played; below zero on its last level. */
 	const spare = $derived(atFrontier ? BUDGET - spent(run!) - Math.max(0, game!.moves - game!.par) : 0);
 
 	const here = () => location.origin + location.pathname;
-	const shapeKey = () => `unfold:shape:${day}`;
-	const solvedKey = () => `unfold:solved:${day}`;
-	const orderKey = () => `unfold:order:${day}`;
+	const shapeKey = (level: number) => `unfold:shape:${day}:${level}`;
+	const solvedKey = (level: number) => `unfold:solved:${day}:${level}`;
+	const orderKey = (level: number) => `unfold:order:${day}:${level}`;
 
 	onMount(() => {
 		loadCore().then(
@@ -136,6 +145,8 @@
 		for (const g of shelf.values()) g.free();
 		shelf.clear();
 		game?.free();
+		slide = 0;
+		clearTimeout(advanceTimer);
 		game = new Game(seed, level, movesBefore(level));
 		paper = paperColors(seed);
 		closeCard();
@@ -149,21 +160,26 @@
 		return run && !finished(run) && level === frontier(run) ? run.pending : 0;
 	}
 
-	/** Saves the run as its level is played, and ends it once a level is solved over budget. */
+	/** Saves the run as its level is played; a solve then slides on to the next level, or ends the run with the card. */
 	function progress(g: Game, moves: number, solved: boolean): void {
-		if (!run || day === undefined || g.seed !== dailySeed(day) || finished(run) || g.level !== frontier(run)) return;
+		if (!run || day === undefined || g.seed !== dailySeed(day)) return;
+		if (solved && g.solvedAt !== undefined && g.level <= frontier(run)) writeJson(solvedKey(g.level), round(g.unfolded));
+		if (finished(run) || g.level !== frontier(run)) return;
 		if (!solved) {
 			if (moves !== run.pending) saveRun(day, (run = { ...run, pending: moves }));
 			return;
 		}
 		saveRun(day, (run = { solved: [...run.solved, [moves, g.par]], pending: 0 }));
-		if (!finished(run)) return;
-		writeJson(solvedKey(), round(g.unfolded));
-		cardShape = { flaps: g.flaps, faceUp: g.faceUp, unfolded: g.unfolded };
-		loadCorners();
-		setTimeout(() => {
-			if (game === g) cardOpen = true;
-		}, CARD_DELAY);
+		const done = finished(run);
+		clearTimeout(advanceTimer);
+		advanceTimer = setTimeout(
+			() => {
+				if (game !== g) return;
+				if (done) openCard();
+				else jump(1);
+			},
+			done ? CARD_DELAY : ADVANCE_DELAY
+		);
 	}
 
 	/** A neighbouring level: in today's run, only those reached; in a shared puzzle, any. */
@@ -174,29 +190,18 @@
 		return !daily || level <= frontier(run!) ? level : undefined;
 	}
 
-	/** The run's last level as the card shows it, read from a fresh copy when it isn't on the board. */
-	function loadCardShape(): void {
-		if (cardShape || !run || !game) return;
-		const g = new Game(game.seed, run.solved.length);
-		const solved = readJson<Point[]>(solvedKey());
-		cardShape = { flaps: g.flaps, faceUp: g.faceUp, unfolded: solved?.length === g.dots ? solved : g.sheet() };
-		g.free();
-	}
-
-	/** The card's shape: as reshaped, else as the run's last level unfolded. */
-	function loadCorners(): void {
-		if (!cardShape) return;
-		unfoldedCorners = cardShape.unfolded;
-		const saved = readJson<Point[]>(shapeKey());
-		reshaped = saved?.length === unfoldedCorners.length;
-		corners = reshaped ? saved! : unfoldedCorners;
-		const stack = readJson<number[]>(orderKey());
-		order = stack?.length === cardShape.flaps.length ? stack : flatOrder();
-	}
-
+	/** The card for the level on the board: its paper as it unfolded when solved, as reshaped if it was. */
 	function openCard(): void {
-		loadCardShape();
-		if (!corners) loadCorners();
+		if (!game || !shareable) return;
+		const { level, flaps, faceUp, dots } = game;
+		const solved = readJson<Point[]>(solvedKey(level));
+		cardShape = { level, flaps, faceUp, unfolded: solved?.length === dots ? solved : game.sheet() };
+		unfoldedCorners = cardShape.unfolded;
+		const saved = readJson<Point[]>(shapeKey(level));
+		reshaped = saved?.length === dots;
+		corners = reshaped ? saved! : unfoldedCorners;
+		const stack = readJson<number[]>(orderKey(level));
+		order = stack?.length === flaps.length ? stack : flatOrder();
 		cardOpen = true;
 	}
 
@@ -209,8 +214,8 @@
 		order = stack;
 		reshaped = true;
 		writeJson(RESHAPED_KEY, true);
-		writeJson(shapeKey(), round(next));
-		writeJson(orderKey(), stack);
+		writeJson(shapeKey(cardShape!.level), round(next));
+		writeJson(orderKey(cardShape!.level), stack);
 	}
 
 	const flatOrder = () => (cardShape ? cardShape.flaps.map((_, k) => k) : []);
@@ -220,8 +225,8 @@
 		if (unfoldedCorners) corners = unfoldedCorners;
 		order = flatOrder();
 		reshaped = false;
-		forget(shapeKey());
-		forget(orderKey());
+		forget(shapeKey(cardShape!.level));
+		forget(orderKey(cardShape!.level));
 	}
 
 	async function share(): Promise<void> {
@@ -257,6 +262,8 @@
 	function jump(step: 1 | -1): void {
 		const level = neighbour(step);
 		if (!game || level === undefined) return;
+		clearTimeout(advanceTimer);
+		slide = step;
 		closeCard();
 		shelf.set(game.level, game);
 		game = shelf.get(level) ?? new Game(game.seed, level, movesBefore(level));
@@ -275,6 +282,8 @@
 			return;
 		}
 		restartAsked = false;
+		clearTimeout(advanceTimer);
+		slide = 0;
 		closeCard();
 		const { seed, level } = game;
 		const before = atFrontier ? game.moves : 0;
@@ -297,7 +306,7 @@
 		if (!game) return;
 		if (e.key !== 'r') restartAsked = false;
 		const g = game;
-		const select = () => (!g.solved ? g.select() : neighbour(1) !== undefined ? jump(1) : result && openCard());
+		const select = () => (!g.solved ? g.select() : neighbour(1) !== undefined ? jump(1) : openCard());
 		const keys: Record<string, () => void> = {
 			ArrowLeft: () => g.step(1),
 			h: () => g.step(1),
@@ -335,7 +344,11 @@
 
 	<div class="board">
 		{#if game}
-			<Board {game} {showCursor} />
+			{#key game}
+				<div class="slide" in:fly={{ x: `${slide * 70}%`, opacity: 0, duration: SLIDE_TIME }} out:fly={{ x: `${-slide * 70}%`, opacity: 0, duration: SLIDE_TIME }}>
+					<Board {game} {showCursor} />
+				</div>
+			{/key}
 		{:else if failed}
 			<p class="loading">{t().failed}</p>
 		{:else}
@@ -358,23 +371,17 @@
 		</p>
 
 		<nav>
-			{#if levels}
-				<button onclick={() => jump(-1)} disabled={neighbour(-1) === undefined} aria-label={t().previousLevel}>‹</button>
-			{/if}
+			<button onclick={() => jump(-1)} disabled={neighbour(-1) === undefined} aria-label={t().previousLevel}>‹</button>
 			<button class="icon" onclick={restart} aria-label={game.solved ? t().replay : t().restart} title={game.solved ? t().replay : t().restart}><Icon name="reset" /></button>
-			{#if result}
-				<button class="icon primary" onclick={openCard} aria-label={t().yourCard} title={t().yourCard}><Icon name="share" /></button>
-			{:else}
-				<button class="icon" onclick={copyLink} aria-label={t().copyLink} title={t().copyLink}
-					><Icon name="link" /></button
+			{#if daily}
+				<button class="icon" class:primary={shareable} onclick={openCard} disabled={!shareable} aria-label={t().yourCard} title={t().yourCard}
+					><Icon name="share" /></button
 				>
+			{:else}
+				<button class="icon" onclick={copyLink} aria-label={t().copyLink} title={t().copyLink}><Icon name="link" /></button>
 			{/if}
 			<button class="icon" onclick={() => (helpOpen = true)} aria-label={t().howToPlay} title={t().howToPlay}><Icon name="help" /></button>
-			{#if levels}
-				<button class:primary={game.solved && neighbour(1) !== undefined} onclick={() => jump(1)} disabled={neighbour(1) === undefined} aria-label={t().nextLevel}
-					>{game.solved && neighbour(1) !== undefined ? `${t().nextLevel} ›` : '›'}</button
-				>
-			{/if}
+			<button onclick={() => jump(1)} disabled={neighbour(1) === undefined} aria-label={t().nextLevel}>›</button>
 		</nav>
 
 	{/if}
@@ -481,6 +488,10 @@
 		aspect-ratio: 1;
 		display: grid;
 		place-items: center;
+	}
+	.slide {
+		grid-area: 1 / 1;
+		width: 100%;
 	}
 	.board::before {
 		content: '';

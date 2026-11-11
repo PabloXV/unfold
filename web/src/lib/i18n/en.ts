@@ -35,7 +35,7 @@ export const en = {
 		'The paper is folded up around a circle. Move its dots until no creases cross, and it unfolds.',
 		'Drag a dot along the circle; the others shift over to make room. Setting a dot down somewhere new is a move. To cancel, drag it far outside the circle.',
 		'Each day is one run of levels that get harder. "Solvable in 4" is the fewest moves a level takes, and the run has 10 extra moves to spend. Go over, finish that level, and the run is done. A new one comes tomorrow.',
-		'Replay any level you reached with ‹ ›. When the run ends, share your card; drag its corners to fold the paper into a shape of your own first. The fire counts the days in a row you finished a run.'
+		'Replay any level you reached with ‹ ›, and share any you solved; drag the card\'s corners to fold the paper into a shape of your own first. The fire counts the days in a row you finished a run.'
 	],
 	keys: {
 		move: 'move around the circle',

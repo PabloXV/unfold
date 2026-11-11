@@ -13,7 +13,15 @@ export type Result = {
 	grid: string;
 	/** Days in a row with a finished run, counting this one. */
 	streak: number;
+	/** Extra moves left while the run is still going. */
+	spare?: number;
 };
+
+/** Like "level 6", or "level 2 · 8 to spare" while the run is still going. */
+export function runLine({ level, spare }: Result): string {
+	const m = t();
+	return spare === undefined ? m.level(level) : `${m.level(level)} · ${m.toSpare(spare)}`;
+}
 
 /** The card's width and height in pixels. */
 export const SIZE = 1080;
@@ -27,8 +35,8 @@ export function score(moves: number, par: number): string {
 }
 
 /** The result as text ending with the link, which is what people tap. */
-export function shareText({ date, level, grid }: Result, url: string): string {
-	return `unfold ${date} · ${t().level(level)}\n${grid}\n${url}`;
+export function shareText(result: Result, url: string): string {
+	return `unfold ${result.date} · ${runLine(result)}\n${result.grid}\n${url}`;
 }
 
 let fonts: Promise<string> | undefined;

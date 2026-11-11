@@ -3,7 +3,7 @@
 	import { FIRE } from './Icon.svelte';
 	import { t } from './i18n/index.svelte';
 	import Paper from './Paper.svelte';
-	import { FONT, SIZE, type Result } from './card';
+	import { FONT, SIZE, runLine, type Result } from './card';
 	import { nearestTo, svgPoint, trianglePath } from './geometry';
 	import { overlaps, restack } from './stacking';
 	import { CAST, DEFAULT_PAPER, LIGHT } from './theme';
@@ -105,7 +105,7 @@
 	let widths = $state({ score: 0, count: 0 });
 
 	const texts = $derived({
-		text: result.streak ? `${t().level(result.level)} · ` : t().level(result.level),
+		text: result.streak ? `${runLine(result)} · ` : runLine(result),
 		count: result.streak ? String(result.streak) : ''
 	});
 
@@ -181,7 +181,7 @@
 	class:grabbing={dragging !== undefined}
 	viewBox="0 0 {SIZE} {SIZE}"
 	role="img"
-	aria-label={t().cardLabel(result.date, `${t().level(result.level)} ${result.grid}`) + (result.streak ? `, ${t().streak(result.streak)}` : '')}
+	aria-label={t().cardLabel(result.date, `${runLine(result)} ${result.grid}`) + (result.streak ? `, ${t().streak(result.streak)}` : '')}
 	{onpointerdown}
 	{onpointermove}
 	{onpointerup}
