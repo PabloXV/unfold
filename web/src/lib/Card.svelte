@@ -124,7 +124,7 @@
 
 	<g transform="translate({CX} {CY}) scale({SCALE})">
 		<g filter="url(#card-shadow)"><path d={silhouette} fill="#000" /></g>
-		<Paper flaps={stack.map((k) => flaps[k])} faceUp={stack.map((k) => faceUp[k])} {pos} colors={PAPER} id="card" />
+		<Paper flaps={stack.map((k) => flaps[k])} faceUp={stack.map((k) => faceUp[k])} {pos} colors={PAPER} creaseWidth={0.009} id="card" />
 		{#if editing}
 			{#each pos as p, v (v)}
 				<circle class="handle no-export" class:held={dragging === v} cx={p.x} cy={-p.y} r="0.06" />
