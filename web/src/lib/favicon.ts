@@ -1,9 +1,9 @@
 import { contrast } from './accent';
+import { CAST, DARK, LIGHT } from './theme';
 
 type Pt = [number, number];
 
 export const FIXED = { front: '#d7432b', back: '#f6e7bf' };
-const TILES = ['#ebe4d6', '#3d3833'];
 const MIN_CONTRAST = 1.25;
 
 const BODY: Pt[] = [[3, 13.9], [13.2, 48.5], [35.7, 48.5], [50.8, 33.3]];
@@ -23,13 +23,13 @@ function crease([a, b]: Pt[]): string {
 /** Cream, unless a paper color would fade into it and the dark tile shows both better. */
 function tileFor(front: string, back: string): string {
 	const worst = (tile: string) => Math.min(contrast(front, tile), contrast(back, tile));
-	const [light, dark] = TILES;
+	const [light, dark] = [LIGHT.bg, DARK.bg];
 	return worst(light) >= MIN_CONTRAST || worst(light) >= worst(dark) ? light : dark;
 }
 
 /** The swan folded from one sheet, in two paper colors on a rounded tile, as an svg document. */
 export function swanSvg(front: string, back: string): string {
-	const shadow = `<g fill="#3c2d19" opacity="0.22" transform="translate(1 1.6)">${[BODY, NECK, HEAD].map((p) => polygon(p, 'inherit')).join('')}</g>`;
+	const shadow = `<g fill="${CAST}" opacity="0.22" transform="translate(1 1.6)">${[BODY, NECK, HEAD].map((p) => polygon(p, 'inherit')).join('')}</g>`;
 	const swan = `${shadow}${polygon(BODY, front)}${polygon(NECK, back)}${crease(NECK)}${polygon(HEAD, front)}${crease(HEAD)}`;
 	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="${tileFor(front, back)}"/><g transform="translate(5.3 5.3) scale(0.86)">${swan}</g></svg>`;
 }

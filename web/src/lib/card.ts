@@ -32,25 +32,35 @@ function embeddedFonts(): Promise<string> {
 }
 
 /** The card's svg as a PNG. */
-export async function toPng(svg: SVGSVGElement, size = SIZE): Promise<Blob> {
+export async function toPng(svg: SVGSVGElement): Promise<Blob> {
 	const copy = svg.cloneNode(true) as SVGSVGElement;
 	const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
 	style.textContent = await embeddedFonts();
 	copy.prepend(style);
 	copy.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-	copy.setAttribute('width', String(size));
-	copy.setAttribute('height', String(size));
+	copy.setAttribute('width', String(SIZE));
+	copy.setAttribute('height', String(SIZE));
 	const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(copy)], { type: 'image/svg+xml' }));
 	try {
 		const img = new Image();
 		img.src = url;
 		await img.decode();
 		const canvas = document.createElement('canvas');
-		canvas.width = canvas.height = size;
-		canvas.getContext('2d')!.drawImage(img, 0, 0, size, size);
+		canvas.width = canvas.height = SIZE;
+		canvas.getContext('2d')!.drawImage(img, 0, 0, SIZE, SIZE);
 		return await new Promise((done, fail) => canvas.toBlob((b) => (b ? done(b) : fail(new Error('no image'))), 'image/png'));
 	} finally {
 		URL.revokeObjectURL(url);
+	}
+}
+
+/** Copies text, saying whether the clipboard allowed it. */
+export async function copyText(text: string): Promise<boolean> {
+	try {
+		await navigator.clipboard.writeText(text);
+		return true;
+	} catch {
+		return false;
 	}
 }
 
@@ -64,12 +74,7 @@ export async function shareLink(text: string): Promise<'shared' | 'copied' | 'ca
 			if ((e as Error).name === 'AbortError') return 'cancelled';
 		}
 	}
-	try {
-		await navigator.clipboard.writeText(text);
-		return 'copied';
-	} catch {
-		return 'failed';
-	}
+	return (await copyText(text)) ? 'copied' : 'failed';
 }
 
 /** Shares with the share sheet, else copies to the clipboard, else downloads. */

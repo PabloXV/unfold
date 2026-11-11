@@ -86,7 +86,7 @@ export class Game {
 		if (counted && this.solved) {
 			this.unfolded = points(this.#attempt.unfoldTarget());
 			this.solvedAt = performance.now();
-			record(this.seed, this.level, this.moves);
+			record(this.code, this.moves);
 		}
 	}
 

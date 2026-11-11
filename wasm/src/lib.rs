@@ -15,16 +15,6 @@ impl Attempt {
         Attempt(uc::Attempt::new(uc::Puzzle::new(uc::Seed(seed & uc::Seed::MASK), level.max(1) as usize)))
     }
 
-    #[wasm_bindgen(getter)]
-    pub fn seed(&self) -> u32 {
-        self.0.puzzle.seed.0
-    }
-
-    #[wasm_bindgen(getter)]
-    pub fn level(&self) -> u32 {
-        self.0.puzzle.level as u32
-    }
-
     /// Like ABC123/9.
     #[wasm_bindgen(getter)]
     pub fn code(&self) -> String {
@@ -49,11 +39,6 @@ impl Attempt {
     /// Each vertex's slot on the circle, slot 0 at 3 o'clock, counterclockwise.
     pub fn slots(&self) -> Vec<u32> {
         self.0.slot_of().iter().map(|&s| s as u32).collect()
-    }
-
-    #[wasm_bindgen(js_name = vertexAt)]
-    pub fn vertex_at(&self, slot: u32) -> u32 {
-        self.0.vertex_at(slot as usize) as u32
     }
 
     #[wasm_bindgen(getter)]

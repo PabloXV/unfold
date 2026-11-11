@@ -2,6 +2,7 @@
 	import '@fontsource/courier-prime/400.css';
 	import '@fontsource/courier-prime/700.css';
 	import favicon from '#lib/assets/favicon.svg';
+	import { DARK, LIGHT } from '#lib/theme.ts';
 	import type { LayoutProps } from './$types';
 
 	let { children }: LayoutProps = $props();
@@ -11,8 +12,8 @@
 	<link rel="icon" href={favicon} />
 	<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 	<meta name="color-scheme" content="light dark" />
-	<meta name="theme-color" content="#ebe4d6" media="(prefers-color-scheme: light)" />
-	<meta name="theme-color" content="#3d3833" media="(prefers-color-scheme: dark)" />
+	<meta name="theme-color" content={LIGHT.bg} media="(prefers-color-scheme: light)" />
+	<meta name="theme-color" content={DARK.bg} media="(prefers-color-scheme: dark)" />
 </svelte:head>
 
 {@render children()}
@@ -28,7 +29,6 @@
 		--button: #fbf9f4;
 		--paper-front: #d9473f;
 		--paper-back: #f2c14e;
-		--dot: #2f2b26;
 		--shadow: rgb(60 45 25 / 0.26);
 		--cast: rgb(60 45 25);
 		--cast-step: 0.032;
@@ -44,7 +44,6 @@
 			--muted: #bdb5aa;
 			--line: #5a544d;
 			--button: #4a4540;
-			--dot: #f1ece3;
 			--shadow: rgb(0 0 0 / 0.4);
 			--cast: rgb(0 0 0);
 			--cast-step: 0.05;

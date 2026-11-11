@@ -4,6 +4,7 @@
 	import { FONT, SIZE, type Result } from './card';
 	import { nearestTo, svgPoint, trianglePath } from './geometry';
 	import { overlaps, restack } from './stacking';
+	import { CAST, DEFAULT_PAPER, LIGHT } from './theme';
 	import type { Point } from './unfold';
 
 	let {
@@ -39,14 +40,12 @@
 	const HINT_DELAY = 700;
 	const HINT_LENGTH = 1100;
 	const HINT_REACH = 0.18;
-	const INK = '#2a2723';
-	const MUTED = '#7a736a';
 
 	const css = getComputedStyle(document.documentElement);
 	const PAPER = {
-		front: css.getPropertyValue('--paper-front').trim() || '#d9473f',
-		back: css.getPropertyValue('--paper-back').trim() || '#f2c14e',
-		cast: 'rgb(60 45 25)',
+		front: css.getPropertyValue('--paper-front').trim() || DEFAULT_PAPER.front,
+		back: css.getPropertyValue('--paper-back').trim() || DEFAULT_PAPER.back,
+		cast: CAST,
 		castStep: '0.032'
 	};
 
@@ -153,30 +152,30 @@
 >
 	<defs>
 		<radialGradient id="card-spot" cx={CX} cy={CY} r={SIZE * 0.62} gradientUnits="userSpaceOnUse">
-			<stop offset="0" stop-color="#fffdf8" />
-			<stop offset="1" stop-color="#ebe4d6" />
+			<stop offset="0" stop-color={LIGHT.spot} />
+			<stop offset="1" stop-color={LIGHT.bg} />
 		</radialGradient>
 		<filter id="card-shadow" x="-25%" y="-25%" width="150%" height="150%">
 			<feGaussianBlur in="SourceAlpha" stdDeviation="0.02" />
 			<feOffset dx="0.02" dy="0.04" result="blur" />
-			<feFlood flood-color="rgb(60, 45, 25)" flood-opacity="0.26" />
+			<feFlood flood-color={CAST} flood-opacity="0.26" />
 			<feComposite in2="blur" operator="in" />
 		</filter>
 	</defs>
 
 	<rect width={SIZE} height={SIZE} fill="url(#card-spot)" />
-	<text x="80" y="140" fill={INK} font-family={FONT} font-size="64" font-weight="700">unfold</text>
-	<text x={SIZE - 80} y="140" fill={MUTED} font-family={FONT} font-size="40" text-anchor="end">{result.date}</text>
+	<text x="80" y="140" fill={LIGHT.text} font-family={FONT} font-size="64" font-weight="700">unfold</text>
+	<text x={SIZE - 80} y="140" fill={LIGHT.muted} font-family={FONT} font-size="40" text-anchor="end">{result.date}</text>
 
 	<g transform="translate({CX} {CY}) scale({SCALE})">
 		<g filter="url(#card-shadow)"><path d={silhouette} fill="#000" /></g>
 		<Paper flaps={stack.map((k) => flaps[k])} faceUp={stack.map((k) => faceUp[k])} {pos} colors={PAPER} creaseWidth={0.009} id="card" />
 	</g>
 
-	<text x={CX} y="960" fill={INK} font-family={FONT} font-size="48" font-weight="700" text-anchor="middle">
+	<text x={CX} y="960" fill={LIGHT.text} font-family={FONT} font-size="48" font-weight="700" text-anchor="middle">
 		{result.moves} moves · fewest possible {result.par}
 	</text>
-	<text x={CX} y="1024" fill={MUTED} font-family={FONT} font-size="30" text-anchor="middle">{host}</text>
+	<text x={CX} y="1024" fill={LIGHT.muted} font-family={FONT} font-size="30" text-anchor="middle">{host}</text>
 </svg>
 
 <style>

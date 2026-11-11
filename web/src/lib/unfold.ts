@@ -27,8 +27,3 @@ export function formatDay(day: number): string {
 		day: 'numeric'
 	});
 }
-
-/** Like ABC123. */
-export function formatSeed(seed: number): string {
-	return seed.toString(16).toUpperCase().padStart(6, '0');
-}

@@ -8,15 +8,16 @@
 	import { dailyLevel, dailySeed, formatDay, loadCore, paperColors, parseCode, today, type Point } from '#lib/unfold.ts';
 	import { bestMoves } from '#lib/scores.ts';
 	import { forget, readJson, writeJson } from '#lib/storage.ts';
-	import { shareCard, shareLink, shareText, toPng, type Result } from '#lib/card.ts';
+	import { copyText, shareCard, shareLink, shareText, toPng, type Result } from '#lib/card.ts';
 	import { accentFor } from '#lib/accent.ts';
 	import { swanUrl } from '#lib/favicon.ts';
+	import { DARK, LIGHT } from '#lib/theme.ts';
 
 	const RESTART_TIME = 2000;
 	const NOTICE_TIME = 1500;
 	const CARD_DELAY = 1500;
 	const RESHAPED_KEY = 'unfold:reshaped';
-	const BACKDROPS = { light: ['#ebe4d6', '#fffdf8'], dark: ['#3d3833', '#6a645c'] };
+	const BACKDROPS = { light: [LIGHT.bg, LIGHT.spot], dark: [DARK.bg, DARK.spot] };
 
 	let game = $state.raw<Game | undefined>(undefined);
 	/** Set when playing a day's seed. */
@@ -27,12 +28,13 @@
 	let dark = $state(false);
 	let cardOpen = $state(false);
 	let helpOpen = $state(false);
-	/** The card's shape as reshaped, and as it first unfolded. */
+	/** Whether the card's shape differs from how it unfolded. */
 	let reshaped = $state(false);
+	/** The card's corners now, and as the paper first unfolded. */
 	let corners = $state.raw<Point[] | undefined>(undefined);
-	/** The card's flaps bottom to top; grabbing a corner lifts its flaps to the top. */
-	let order = $state.raw<number[]>([]);
 	let unfoldedCorners: Point[] | undefined;
+	/** The card's flaps bottom to top. */
+	let order = $state.raw<number[]>([]);
 	let cardView = $state<Card | undefined>(undefined);
 	/** The card as a PNG, made ahead so sharing opens the share sheet right on the tap. */
 	let png: Promise<Blob> | undefined;
@@ -50,7 +52,7 @@
 	const result = $derived.by((): Result | undefined => {
 		void scored;
 		if (!daily || !game || day === undefined) return;
-		const moves = bestMoves(game.seed, game.level);
+		const moves = bestMoves(game.code);
 		return moves === undefined ? undefined : { date: formatDay(day), moves, par: game.par };
 	});
 
@@ -129,6 +131,7 @@
 		paper = paperColors(seed);
 		closeCard();
 		corners = undefined;
+		restartAsked = false;
 		showUrl();
 	}
 
@@ -149,7 +152,7 @@
 		reshaped = fits(saved);
 		corners = reshaped ? saved! : unfoldedCorners;
 		const stack = readJson<number[]>(orderKey());
-		order = stack?.length === game.flaps.length ? stack : game.flaps.map((_, k) => k);
+		order = stack?.length === game.flaps.length ? stack : flatOrder();
 	}
 
 	function openCard(): void {
@@ -170,11 +173,12 @@
 		writeJson(orderKey(), stack);
 	}
 
+	const flatOrder = () => (game ? game.flaps.map((_, k) => k) : []);
 	const round = (pts: Point[]) => pts.map((p) => ({ x: +p.x.toFixed(4), y: +p.y.toFixed(4) }));
 
 	function resetShape(): void {
 		if (unfoldedCorners) corners = unfoldedCorners;
-		order = game ? game.flaps.map((_, k) => k) : [];
+		order = flatOrder();
 		reshaped = false;
 		forget(shapeKey());
 		forget(orderKey());
@@ -196,12 +200,7 @@
 
 	/** Copies text, or shows it when the clipboard is blocked. */
 	async function copy(text: string, done: string): Promise<void> {
-		try {
-			await navigator.clipboard.writeText(text);
-			flash(done);
-		} catch {
-			flash(text);
-		}
+		flash((await copyText(text)) ? done : text);
 	}
 
 	/** The daily keeps a clean address; any other puzzle shows its code. */
@@ -244,11 +243,12 @@
 	}
 
 	function onkeydown(e: KeyboardEvent): void {
-		if (!game || e.metaKey || e.ctrlKey || e.altKey) return;
+		if (e.metaKey || e.ctrlKey || e.altKey) return;
 		if (cardOpen || helpOpen) {
 			if (e.key === 'Escape') cardOpen = helpOpen = false;
 			return;
 		}
+		if (!game) return;
 		if (e.key !== 'r') restartAsked = false;
 		const g = game;
 		const select = () => (!g.solved ? g.select() : result ? openCard() : jump(1));
@@ -287,9 +287,7 @@
 		<h1>unfold</h1>
 		{#if game}
 			<p class="meta">
-				{[daily && day !== undefined ? formatDay(day) : `level ${game.level}`, `fewest possible ${game.par}`]
-					.filter(Boolean)
-					.join(' · ')}
+				{daily && day !== undefined ? formatDay(day) : `level ${game.level}`} · fewest possible {game.par}
 				{#if !daily}<span class="code">{game.code}</span>{/if}
 			</p>
 		{/if}
@@ -343,7 +341,7 @@
 {#if helpOpen}
 	<div class="overlay" role="presentation" onclick={(e) => e.target === e.currentTarget && (helpOpen = false)}>
 		<div class="sheet help-sheet" role="dialog" aria-modal="true" aria-label="How to play">
-			<button class="close" onclick={() => (helpOpen = false)} aria-label="Close"><Icon name="close" /></button>
+			<button class="icon close" onclick={() => (helpOpen = false)} aria-label="Close"><Icon name="close" /></button>
 			<h2>How to play</h2>
 			<p>The paper is folded up around a circle. Move its dots until no creases cross, and it unfolds.</p>
 			<p>Drag a dot along the circle; the others shift over to make room. Setting a dot down somewhere new is a move.</p>
@@ -368,7 +366,7 @@
 {#if cardOpen && result && corners && game}
 	<div class="overlay" role="presentation" onclick={(e) => e.target === e.currentTarget && closeCard()}>
 		<div class="sheet" role="dialog" aria-modal="true" aria-label="Your card">
-			<button class="close" onclick={closeCard} aria-label="Close"><Icon name="close" /></button>
+			<button class="icon close" onclick={closeCard} aria-label="Close"><Icon name="close" /></button>
 			<div class="frame">
 				<Card
 					bind:this={cardView}
@@ -382,13 +380,13 @@
 					onchange={saveShape}
 				/>
 				<div class="bar" role="toolbar" aria-label="Card">
-					<button onclick={resetShape} disabled={!reshaped} aria-label="Reset shape" title="Reset shape">
+					<button class="icon" onclick={resetShape} disabled={!reshaped} aria-label="Reset shape" title="Reset shape">
 						<Icon name="reset" />
 					</button>
-					<button onclick={share} aria-label="Share card" title="Share card">
+					<button class="icon" onclick={share} aria-label="Share card" title="Share card">
 						<Icon name="share" />
 					</button>
-					<button onclick={shareResultLink} aria-label="Share link" title="Share link">
+					<button class="icon" onclick={shareResultLink} aria-label="Share link" title="Share link">
 						<Icon name="link" />
 					</button>
 				</div>
@@ -426,6 +424,7 @@
 		place-items: center;
 		width: 2.75rem;
 		height: 2.75rem;
+		min-width: 0;
 		padding: 0;
 	}
 	h1 {
@@ -492,17 +491,13 @@
 		box-shadow: 0 1rem 3rem rgb(0 0 0 / 0.3);
 		animation: pop-in 0.35s cubic-bezier(0.2, 1.3, 0.4, 1);
 	}
-	.close {
+	button.close {
 		position: absolute;
 		top: 0.4rem;
 		right: 0.4rem;
 		z-index: 1;
-		min-width: 0;
 		width: 2.25rem;
 		height: 2.25rem;
-		padding: 0;
-		display: grid;
-		place-items: center;
 		border-color: transparent;
 		background: transparent;
 		color: var(--muted);
@@ -550,12 +545,6 @@
 		background: #e4ddd0;
 	}
 	.bar button {
-		display: grid;
-		place-items: center;
-		min-width: 0;
-		width: 2.75rem;
-		height: 2.75rem;
-		padding: 0;
 		border: none;
 		background: transparent;
 		color: #3a352f;

@@ -46,10 +46,13 @@ function linearRgb({ l: L, c, h }: Lch): number[] {
 /** The color as #rrggbb, losing chroma rather than hue when sRGB can't show it. */
 function toHex(color: Lch): string {
 	const fits = (c: number) => linearRgb({ ...color, c }).every((v) => v >= -1e-4 && v <= 1 + 1e-4);
-	let [lo, hi] = [0, color.c];
-	if (!fits(hi)) for (let i = 0; i < 20; i++) [lo, hi] = fits((lo + hi) / 2) ? [(lo + hi) / 2, hi] : [lo, (lo + hi) / 2];
-	else lo = hi;
-	const rgb = linearRgb({ ...color, c: lo }).map((v) => Math.round(Math.min(1, Math.max(0, fromLinear(v))) * 255));
+	let c = color.c;
+	if (!fits(c)) {
+		let [lo, hi] = [0, c];
+		for (let i = 0; i < 20; i++) [lo, hi] = fits((lo + hi) / 2) ? [(lo + hi) / 2, hi] : [lo, (lo + hi) / 2];
+		c = lo;
+	}
+	const rgb = linearRgb({ ...color, c }).map((v) => Math.round(Math.min(1, Math.max(0, fromLinear(v))) * 255));
 	return `#${rgb.map((v) => v.toString(16).padStart(2, '0')).join('')}`;
 }
 
