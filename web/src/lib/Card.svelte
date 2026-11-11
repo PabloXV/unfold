@@ -3,7 +3,7 @@
 	import { FIRE } from './Icon.svelte';
 	import { t } from './i18n/index.svelte';
 	import Paper from './Paper.svelte';
-	import { FONT, SIZE, score, type Result } from './card';
+	import { FONT, SIZE, type Result } from './card';
 	import { nearestTo, svgPoint, trianglePath } from './geometry';
 	import { overlaps, restack } from './stacking';
 	import { CAST, DEFAULT_PAPER, LIGHT } from './theme';
@@ -41,6 +41,10 @@
 	const GRAB = 0.22;
 	const LINE = 48;
 	const FLAME = 46;
+	/** The grid of levels above the result line: square size, the gap between, and its baseline. */
+	const SQUARE = 26;
+	const SQUARE_GAP = 10;
+	const GRID_Y = 872;
 	const HINT_DELAY = 700;
 	const HINT_LENGTH = 1100;
 	const HINT_REACH = 0.18;
@@ -101,7 +105,7 @@
 	let widths = $state({ score: 0, count: 0 });
 
 	const texts = $derived({
-		text: result.streak ? `${score(result.moves, result.par)} · ` : score(result.moves, result.par),
+		text: result.streak ? `${t().level(result.level)} · ` : t().level(result.level),
 		count: result.streak ? String(result.streak) : ''
 	});
 
@@ -114,6 +118,15 @@
 	const line = $derived.by(() => {
 		const x = CX - (widths.score + (texts.count ? FLAME + widths.count : 0)) / 2;
 		return { ...texts, x, flameX: x + widths.score, countX: x + widths.score + FLAME };
+	});
+
+	/** Each level's square, with how it's drawn: filled, half filled, or open. */
+	const squares = $derived.by(() => {
+		const width = result.overs.length * (SQUARE + SQUARE_GAP) - SQUARE_GAP;
+		return result.overs.map((over, i) => ({
+			x: CX - width / 2 + i * (SQUARE + SQUARE_GAP),
+			kind: over === 0 ? 'full' : over <= 2 ? 'half' : 'open'
+		}));
 	});
 
 	const silhouette = $derived(flaps.map((f) => trianglePath(f.map((v) => pos[v]))).join(''));
@@ -168,7 +181,7 @@
 	class:grabbing={dragging !== undefined}
 	viewBox="0 0 {SIZE} {SIZE}"
 	role="img"
-	aria-label={t().cardLabel(result.date, score(result.moves, result.par)) + (result.streak ? `, ${t().streak(result.streak)}` : '')}
+	aria-label={t().cardLabel(result.date, `${t().level(result.level)} ${result.grid}`) + (result.streak ? `, ${t().streak(result.streak)}` : '')}
 	{onpointerdown}
 	{onpointermove}
 	{onpointerup}
@@ -197,6 +210,19 @@
 		<Paper flaps={stack.map((k) => flaps[k])} faceUp={stack.map((k) => faceUp[k])} {pos} colors={PAPER} creaseWidth={0.009} id="card" />
 	</g>
 
+	{#each squares as s, i (i)}
+		<rect
+			x={s.x + 1.5}
+			y={GRID_Y - SQUARE + 1.5}
+			width={SQUARE - 3}
+			height={SQUARE - 3}
+			rx="4"
+			fill={s.kind === 'open' ? 'none' : LIGHT.text}
+			fill-opacity={s.kind === 'half' ? 0.4 : 1}
+			stroke={LIGHT.text}
+			stroke-width="3"
+		/>
+	{/each}
 	<g fill={LIGHT.text} font-family={FONT} font-size={LINE} font-weight="700">
 		<text bind:this={scoreText} x={line.x} y="960" xml:space="preserve">{line.text}</text>
 		{#if line.count}

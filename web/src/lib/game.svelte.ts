@@ -1,5 +1,4 @@
 import { points, turn } from './geometry';
-import { record } from './scores';
 import { Attempt, type Point } from './unfold';
 
 /** One attempt at a level as reactive state, mirroring the wasm Attempt after every change. */
@@ -27,8 +26,11 @@ export class Game {
 	unfolded: Point[] = [];
 
 	#attempt: Attempt;
+	/** Moves made before this attempt began, which still count. */
+	#before: number;
 
-	constructor(seed: number, level: number) {
+	constructor(seed: number, level: number, before = 0) {
+		this.#before = before;
 		this.#attempt = new Attempt(seed, level);
 		this.seed = seed;
 		this.level = level;
@@ -47,7 +49,7 @@ export class Game {
 
 	/** Whether restarting would lose anything. */
 	get inProgress(): boolean {
-		return !this.solved && (this.moves > 0 || this.carrying);
+		return !this.solved && (this.moves > this.#before || this.carrying);
 	}
 
 	vertexAt(slot: number): number {
@@ -86,7 +88,6 @@ export class Game {
 		if (counted && this.solved) {
 			this.unfolded = points(this.#attempt.unfoldTarget());
 			this.solvedAt = performance.now();
-			record(this.code, this.moves);
 		}
 	}
 
@@ -115,7 +116,7 @@ export class Game {
 	#sync(): void {
 		const a = this.#attempt;
 		this.slots = Array.from(a.slots());
-		this.moves = a.moves;
+		this.moves = this.#before + a.moves;
 		this.solved = a.solved;
 		this.carried = a.carried;
 		this.crossings = a.crossings;

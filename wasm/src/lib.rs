@@ -109,12 +109,6 @@ pub fn daily_seed(day: u32) -> u32 {
     uc::Seed::daily(day as u64).0
 }
 
-/// The code of a day's puzzle, like ABC123/10.
-#[wasm_bindgen(js_name = dailyCode)]
-pub fn daily_code(day: u32) -> String {
-    format!("{}/{}", uc::Seed::daily(day as u64), uc::DAILY_LEVEL)
-}
-
 /// The paper's front and back colors for a seed, as CSS hex colors.
 #[wasm_bindgen(js_name = paperColors)]
 pub fn paper_colors(seed: u32) -> Vec<String> {
@@ -126,12 +120,6 @@ pub fn paper_colors(seed: u32) -> Vec<String> {
 #[wasm_bindgen(js_name = parseCode)]
 pub fn parse_code(code: &str) -> Option<Vec<u32>> {
     uc::parse_code(code.trim()).map(|(seed, level)| vec![seed.0, level as u32])
-}
-
-/// The level of a seed that is the day's puzzle.
-#[wasm_bindgen(js_name = dailyLevel)]
-pub fn daily_level() -> u32 {
-    uc::DAILY_LEVEL as u32
 }
 
 fn flatten(points: &[uc::Point]) -> Vec<f64> {

@@ -5,9 +5,13 @@ import { t } from './i18n/index.svelte';
 export type Result = {
 	/** Like "Nov 10, 2026", in the reader's locale. */
 	date: string;
-	moves: number;
-	par: number;
-	/** Days in a row solved, counting this one. */
+	/** The last level solved in the run. */
+	level: number;
+	/** Per level, moves over the fewest possible. */
+	overs: number[];
+	/** Like ■■▣□, one square per level. */
+	grid: string;
+	/** Days in a row with a finished run, counting this one. */
 	streak: number;
 };
 
@@ -23,8 +27,8 @@ export function score(moves: number, par: number): string {
 }
 
 /** The result as text ending with the link, which is what people tap. */
-export function shareText({ date, moves, par }: Result, url: string): string {
-	return `unfold ${date}\n${score(moves, par)}\n${url}`;
+export function shareText({ date, level, grid }: Result, url: string): string {
+	return `unfold ${date} · ${t().level(level)}\n${grid}\n${url}`;
 }
 
 let fonts: Promise<string> | undefined;

@@ -17,6 +17,8 @@
 	/** A press between these radii grabs the dot nearest it in angle. */
 	const GRAB_FROM = 0.55;
 	const GRAB_TO = 1.3;
+	/** Dragged this far out, the dot goes back where it was picked up, and letting go there cancels. */
+	const CANCEL = 1.45;
 	const TAU = 2 * Math.PI;
 
 	let svg: SVGSVGElement;
@@ -24,8 +26,8 @@
 	/** Eased from 0 on the circle to 1 fully unfolded. */
 	let unfold = $state(0);
 	let hovered = $state<number | undefined>(undefined);
-	/** The dot being dragged, and the angle of the pointer dragging it. */
-	let drag = $state<{ v: number; angle: number } | undefined>(undefined);
+	/** The dot being dragged, the angle of the pointer dragging it, and whether it's out far enough to cancel. */
+	let drag = $state<{ v: number; angle: number; out: boolean } | undefined>(undefined);
 
 	let angle: number[] = [];
 	let radius: number[] = [];
@@ -39,7 +41,7 @@
 
 	function lifted(v: number): boolean {
 		if (game.solved) return false;
-		if (drag) return drag.v === v;
+		if (drag) return drag.v === v && !drag.out;
 		return hovered === v || (showCursor && game.slots[v] === game.cursor);
 	}
 
@@ -57,11 +59,12 @@
 		const k = 1 - Math.exp(-dt / GLIDE);
 		let moving = false;
 		for (let v = 0; v < game.dots; v++) {
-			const toAngle = drag?.v === v ? drag.angle : slotAngle(game.slots[v]);
+			const held = drag?.v === v && !drag.out;
+			const toAngle = held ? drag!.angle : slotAngle(game.slots[v]);
 			const toRadius = lifted(v) ? 1 + LIFT : 1;
 			const da = wrap(toAngle - angle[v]);
 			const dr = toRadius - radius[v];
-			if (drag?.v === v) {
+			if (held) {
 				angle[v] = toAngle;
 				radius[v] += dr * k;
 				moving ||= Math.abs(dr) > 1e-4;
@@ -126,7 +129,7 @@
 		(e.currentTarget as Element).setPointerCapture(e.pointerId);
 		if (game.carrying) game.putBack();
 		game.pickUp(v);
-		drag = { v, angle: Math.atan2(p.y, p.x) };
+		drag = { v, angle: Math.atan2(p.y, p.x), out: false };
 	}
 
 	function onpointermove(e: PointerEvent): void {
@@ -136,15 +139,22 @@
 			return;
 		}
 		const a = Math.atan2(p.y, p.x);
-		drag = { v: drag.v, angle: a };
+		const out = Math.hypot(p.x, p.y) > CANCEL;
+		if (out !== drag.out) {
+			if (out) game.putBack();
+			else game.pickUp(drag.v);
+		}
+		drag = { v: drag.v, angle: a, out };
+		if (out) return;
 		const slot = Math.round((((a % TAU) + TAU) % TAU) / (TAU / game.dots)) % game.dots;
 		if (slot !== game.slots[drag.v]) game.carryTo(slot);
 	}
 
 	function onpointerup(): void {
 		if (!drag) return;
+		const { out } = drag;
 		drag = undefined;
-		game.setDown();
+		if (!out) game.setDown();
 	}
 
 	function onpointercancel(): void {
