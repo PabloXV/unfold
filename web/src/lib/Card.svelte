@@ -2,6 +2,7 @@
 	import Paper from './Paper.svelte';
 	import { FONT, SIZE, type Result } from './card';
 	import { nearestTo, svgPoint, trianglePath } from './geometry';
+	import { overlaps, restack } from './stacking';
 	import type { Point } from './unfold';
 
 	let {
@@ -34,7 +35,6 @@
 	/** How far from the middle a corner can be dragged, and how near a press must be to grab one. */
 	const REACH = 1.15;
 	const GRAB = 0.22;
-	const LIFT_AFTER = 0.03;
 	const INK = '#2a2723';
 	const MUTED = '#7a736a';
 
@@ -50,8 +50,10 @@
 	let pos = $state.raw<Point[]>([]);
 	let stack = $state.raw<number[]>([]);
 	let dragging = $state<number | undefined>(undefined);
-	/** Whether the dragged corner has moved enough to lift its flaps; a tap changes nothing. */
-	let lifted = false;
+	/** The flaps on the dragged corner, which flaps overlapped at the last step, and whether it moved. */
+	let moving = new Set<number>();
+	let overlapping = new Set<string>();
+	let moved = false;
 
 	$effect.pre(() => {
 		pos = corners;
@@ -73,7 +75,9 @@
 		const v = nearestTo(pos, cardPoint(e), GRAB);
 		if (v === undefined) return;
 		dragging = v;
-		lifted = false;
+		moving = new Set(flaps.flatMap((f, k) => (f.includes(v) ? [k] : [])));
+		overlapping = overlaps(flaps, pos);
+		moved = false;
 		e.preventDefault();
 		svg!.setPointerCapture(e.pointerId);
 	}
@@ -81,20 +85,18 @@
 	function onpointermove(e: PointerEvent): void {
 		if (dragging === undefined) return;
 		const p = cardPoint(e);
-		const v = dragging;
-		if (!lifted && Math.hypot(p.x - pos[v].x, p.y - pos[v].y) > LIFT_AFTER) {
-			stack = [...stack.filter((k) => !flaps[k].includes(v)), ...stack.filter((k) => flaps[k].includes(v))];
-			lifted = true;
-		}
-		if (!lifted) return;
 		const k = Math.min(1, REACH / Math.hypot(p.x, p.y));
 		pos = pos.map((q, v) => (v === dragging ? { x: p.x * k, y: p.y * k } : q));
+		const now = overlaps(flaps, pos);
+		stack = restack(stack, moving, overlapping, now);
+		overlapping = now;
+		moved = true;
 	}
 
 	function onpointerup(): void {
 		if (dragging === undefined) return;
 		dragging = undefined;
-		if (lifted) onchange?.(pos, stack);
+		if (moved) onchange?.(pos, stack);
 	}
 
 	export function element(): SVGSVGElement | undefined {
