@@ -3,35 +3,16 @@
 	the shadow cast on it from above, so higher paper hides what's under it without any further
 	work. The paper has two colored sides, and a flap turned over shows its back. Dots glide
 	around the circle when they move, lift when hovered or carried, and the whole sheet unfolds
-	into its shape once solved. Then, with `reshape`, its corners can be dragged anywhere.
+	into its shape once solved.
 -->
 <script lang="ts">
-	import { turn, type Game } from './game.svelte';
+	import type { Game } from './game.svelte';
+	import Paper from './Paper.svelte';
 	import type { Point } from './unfold';
 
-	let {
-		game,
-		showCursor,
-		colors,
-		reshape = false,
-		onreshape
-	}: {
-		game: Game;
-		showCursor: boolean;
-		/** Per flap, in `game.flaps` order: the paper's color. Two-sided paper without. */
-		colors?: string[];
-		/** Once solved and unfolded, let the corners be dragged anywhere. */
-		reshape?: boolean;
-		/** Where every corner is after each reshaping drag. */
-		onreshape?: (pos: Point[]) => void;
-	} = $props();
+	let { game, showCursor }: { game: Game; showCursor: boolean } = $props();
 
-	/** How near a press has to be to a corner to drag it while reshaping, in radii. */
-	const SHAPE_GRAB = 0.2;
-	/** How far from the center a reshaped corner can go, in radii. */
-	const SHAPE_REACH = 1.15;
-	/** The corner being dragged while reshaping. */
-	let shaping = $state<number | undefined>(undefined);
+	const PAPER = { front: 'var(--paper-front)', back: 'var(--paper-back)', cast: 'var(--cast)', castStep: 'var(--cast-step)' };
 
 	/** How far a hovered or carried dot stands out, as a fraction of the radius. */
 	const LIFT = 0.06;
@@ -52,7 +33,6 @@
 	let hovered = $state<number | undefined>(undefined);
 	/** The dot being dragged, and the angle of the pointer dragging it. */
 	let drag = $state<{ v: number; angle: number } | undefined>(undefined);
-	const reshaping = $derived(reshape && game.solved && unfold >= 1);
 
 	// drawn angle and radius per vertex, eased toward where each belongs
 	let angle: number[] = [];
@@ -135,11 +115,6 @@
 
 	$effect(() => () => cancelAnimationFrame(raf));
 
-	/** Redraws from `game.unfolded`, after something outside changed it. */
-	export function refresh(): void {
-		place();
-	}
-
 	// --- input
 
 	function boardPoint(e: PointerEvent): Point {
@@ -160,26 +135,7 @@
 		return best;
 	}
 
-	/** The corner nearest a point while reshaping, if it's near enough to grab. */
-	function nearestCorner(p: Point): number | undefined {
-		let best: number | undefined;
-		let bestDist = SHAPE_GRAB;
-		pos.forEach((q, v) => {
-			const d = Math.hypot(q.x - p.x, q.y - p.y);
-			if (d < bestDist) [best, bestDist] = [v, d];
-		});
-		return best;
-	}
-
 	function onpointerdown(e: PointerEvent): void {
-		if (reshaping && e.button <= 0) {
-			shaping = nearestCorner(boardPoint(e));
-			if (shaping !== undefined) {
-				e.preventDefault();
-				(e.currentTarget as Element).setPointerCapture(e.pointerId);
-			}
-			return;
-		}
 		if (game.solved || drag || e.button > 0) return;
 		const p = boardPoint(e);
 		const v = nearest(p);
@@ -193,17 +149,6 @@
 
 	function onpointermove(e: PointerEvent): void {
 		const p = boardPoint(e);
-		if (shaping !== undefined) {
-			const r = Math.hypot(p.x, p.y);
-			const k = r > SHAPE_REACH ? SHAPE_REACH / r : 1;
-			game.unfolded[shaping] = { x: p.x * k, y: p.y * k };
-			place();
-			return;
-		}
-		if (reshaping) {
-			if (e.pointerType === 'mouse') hovered = nearestCorner(p);
-			return;
-		}
 		if (!drag) {
 			if (e.pointerType === 'mouse') hovered = game.solved ? undefined : nearest(p);
 			return;
@@ -215,57 +160,18 @@
 	}
 
 	function onpointerup(): void {
-		if (shaping !== undefined) {
-			shaping = undefined;
-			onreshape?.(pos);
-			return;
-		}
 		if (!drag) return;
 		drag = undefined;
 		game.setDown();
 	}
 
 	function onpointercancel(): void {
-		if (shaping !== undefined) {
-			shaping = undefined;
-			onreshape?.(pos);
-			return;
-		}
 		if (!drag) return;
 		drag = undefined;
 		game.putBack();
 	}
 
 	// --- drawing
-
-	/**
-	 * Each flap as a closed path, always wound the same way round, so that many of them filled as
-	 * one path cover their union instead of cancelling out where they overlap.
-	 */
-	const flapPaths = $derived(
-		pos.length !== game.dots
-			? []
-			: game.flaps.map((f) => {
-					let [a, b, c] = f.map((v) => ({ x: pos[v].x, y: -pos[v].y }));
-					if ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x) < 0) [b, c] = [c, b];
-					return `M${a.x} ${a.y}L${b.x} ${b.y}L${c.x} ${c.y}Z`;
-				})
-	);
-
-	/** Per flap, every flap above it as one path: the shape of the shadow cast onto it. */
-	const above = $derived.by(() => {
-		const out: string[] = new Array(flapPaths.length).fill('');
-		for (let k = flapPaths.length - 2; k >= 0; k--) out[k] = out[k + 1] + flapPaths[k + 1];
-		return out;
-	});
-
-	/**
-	 * A shadow without blur filters, which Safari draws slowly: the casting shape eight times over,
-	 * each very faint and a little further off, layers into a smooth fade across about the reach
-	 * of the blur it replaces. Each copy is one path, so overlapping casters never shade darker
-	 * than one.
-	 */
-	const CAST_STEPS = Array.from({ length: 8 }, (_, i) => ({ step: i, x: 0.017 * ((i + 1) / 8), y: 0.036 * ((i + 1) / 8) }));
 
 	/** Where two segments meet, if they do. */
 	function meet(a: Point, b: Point, c: Point, d: Point): Point | undefined {
@@ -301,23 +207,6 @@
 	);
 
 	/**
-	 * The side of the paper a flap shows: its front while its corners run the same way round as
-	 * on the flat sheet, its back once one corner has crossed the opposite edge and turned it
-	 * over. A solved sheet lies all one way, so it's all one color.
-	 */
-	function side(k: number): 'front' | 'back' {
-		return Math.sign(turn(game.flaps[k].map((v) => pos[v]))) === game.faceUp[k] ? 'front' : 'back';
-	}
-
-	/** Two-sided paper, a little deeper the lower a flap lies while folded, as stacked sheets look. */
-	function paperShade(k: number): string {
-		const color = `var(--paper-${side(k)})`;
-		if (game.solved) return color;
-		const depth = game.flaps.length > 1 ? 1 - k / (game.flaps.length - 1) : 0;
-		return `color-mix(in oklab, ${color} ${100 - Math.round(depth * 14)}%, black)`;
-	}
-
-	/**
 	 * How a dot shows: idle dots ripple outward to say they can be grabbed; once one is held the
 	 * others go still and it holds a pulsing ring; a hovered dot, or the keyboard's, holds a
 	 * steady one.
@@ -345,24 +234,7 @@
 	<!-- the paper, with its shadow on the table drawn by CSS, which Safari does quickly -->
 	<svg class="paper" viewBox="-1.25 -1.25 2.5 2.5" aria-hidden="true">
 		{#if pos.length === game.dots}
-			<defs>
-				{#each flapPaths as d, k (k)}
-					<clipPath id="flap-{k}"><path {d} /></clipPath>
-					<!-- defined once and reused by every step, so moving dots rewrites one shape per flap -->
-					{#if above[k]}<path id="above-{k}" d={above[k]} />{/if}
-				{/each}
-			</defs>
-			{#each game.flaps as _, k (k)}
-				<path class="flap" d={flapPaths[k]} style:fill={colors?.[k] ?? paperShade(k)} />
-				<!-- the shadow everything above this flap casts on it, only on it -->
-				{#if above[k]}
-					<g clip-path="url(#flap-{k})">
-						{#each CAST_STEPS as s (s.step)}
-							<use class="cast" href="#above-{k}" transform="translate({s.x} {s.y})" />
-						{/each}
-					</g>
-				{/if}
-			{/each}
+			<Paper flaps={game.flaps} faceUp={game.faceUp} {pos} colors={PAPER} depth={!game.solved} id="board" />
 		{/if}
 	</svg>
 
@@ -385,13 +257,6 @@
 					{:else if state === 'focus'}
 						<circle class="focus" r="0.085" />
 					{/if}
-				</g>
-			{/each}
-		{/if}
-		{#if reshaping}
-			{#each pos as p, v (v)}
-				<g transform="translate({p.x} {-p.y})">
-					<circle class={shaping === v ? 'held' : hovered === v ? 'focus' : 'handle'} r="0.06" />
 				</g>
 			{/each}
 		{/if}
@@ -425,20 +290,10 @@
 	.dragging {
 		cursor: grabbing;
 	}
-	.cast {
-		fill: var(--cast);
-		fill-opacity: var(--cast-step);
-	}
-	.flap {
-		fill: var(--paper);
-		/* quick, so a flap turning over reads as a flip, not a fade */
-		transition: fill 0.2s;
-	}
 	/* rings keep the same line width and dashes at any size, scaled from their own center */
 	.ripple,
 	.held,
-	.focus,
-	.handle {
+	.focus {
 		fill: none;
 		vector-effect: non-scaling-stroke;
 		stroke-dasharray: 3 3;
@@ -462,12 +317,6 @@
 	.focus {
 		stroke: var(--accent);
 		stroke-width: 2px;
-	}
-	/* a corner that can be dragged while reshaping */
-	.handle {
-		stroke: var(--dot);
-		stroke-width: 1.5px;
-		opacity: 0.6;
 	}
 	/* bright for most of the way out, fading at the end */
 	@keyframes ripple {

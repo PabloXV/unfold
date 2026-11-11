@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
 	import Board from '#lib/Board.svelte';
+	import Card from '#lib/Card.svelte';
 	import { Game } from '#lib/game.svelte.ts';
 	import { Attempt, dailyLevels, dailySeed, formatDay, loadCore, parseCode, today, type Point } from '#lib/unfold.ts';
 	import { bestMoves, firstUnsolved } from '#lib/scores.ts';
-	import { renderCard, shareCard, shareText, squares, type Result } from '#lib/card.ts';
+	import { shareCard, shareText, squares, toPng, total, type Result } from '#lib/card.ts';
 
 	const RESTART_TIME = 2000;
 	const NOTICE_TIME = 1500;
@@ -17,12 +18,14 @@
 	let pars = $state.raw<number[]>([]);
 	/** Bumped whenever a score is recorded, so the day's result is worked out again. */
 	let scored = $state(0);
-	/** Dragging the finished shape's corners before sharing. */
-	let reshaping = $state(false);
-	/** Where the finished shape's corners were before any reshaping, to put them back. */
-	let unreshaped: Point[] | undefined;
-	let card = $state<{ blob: Blob; url: string } | undefined>(undefined);
-	let board = $state<Board | undefined>(undefined);
+	/** The share card, shown over the game once the day is done. */
+	let cardOpen = $state(false);
+	/** Dragging the card's corners to reshape it. */
+	let editing = $state(false);
+	/** The finished shape on the card, as reshaped, and as it first unfolded, to go back to. */
+	let corners = $state.raw<Point[] | undefined>(undefined);
+	let unfoldedCorners: Point[] | undefined;
+	let cardView = $state<Card | undefined>(undefined);
 
 	const rung = $derived(ladder && game ? ladder.indexOf(game.level) : -1);
 	const onLastRung = $derived(ladder !== undefined && rung === ladder.length - 1);
@@ -86,7 +89,8 @@
 		shelf.clear();
 		game?.free();
 		game = Game.ofSeed(seed, level);
-		reshaping = false;
+		cardOpen = editing = false;
+		corners = undefined;
 		showUrl();
 	}
 
@@ -99,65 +103,67 @@
 
 	const shapeKey = () => `unfold:shape:${day}`;
 
-	/** The day's finished shape: as it lies on the board if just solved, else as last saved. */
-	function finishedShape(): { flaps: number[][]; faceUp: number[]; corners: Point[] } | undefined {
+	/**
+	 * The finished shape for the card: as reshaped and saved, else as it lies on the board just
+	 * solved, else the flat sheet.
+	 */
+	function loadCorners(): void {
 		if (!game || !onLastRung) return;
-		let corners: Point[] | undefined = game.solved ? game.unfolded : undefined;
-		if (!corners) {
-			try {
-				corners = JSON.parse(localStorage.getItem(shapeKey()) ?? 'null') ?? undefined;
-			} catch {
-				// the flat sheet will do
-			}
+		unfoldedCorners = game.solved ? game.unfolded.map((p) => ({ ...p })) : game.sheet();
+		let saved: Point[] | undefined;
+		try {
+			saved = JSON.parse(localStorage.getItem(shapeKey()) ?? 'null') ?? undefined;
+		} catch {
+			// unreshaped will do
 		}
-		if (corners?.length !== game.dots) corners = game.sheet();
-		return { flaps: game.flaps, faceUp: game.faceUp, corners };
+		corners = saved?.length === game.dots ? saved : unfoldedCorners;
 	}
-
-	async function drawCard(): Promise<void> {
-		const shape = finishedShape();
-		if (!result || !shape) return;
-		const blob = await renderCard(result, shape, location.host);
-		if (card) URL.revokeObjectURL(card.url);
-		card = { blob, url: URL.createObjectURL(blob) };
-	}
-
-	// the card follows the result: drawn once the day is done
-	$effect(() => {
-		if (result && onLastRung) drawCard();
-	});
 
 	// a solve records a score, which may finish the day
 	$effect(() => {
 		if (game?.solved) untrack(() => scored++);
 	});
 
-	function toggleReshape(): void {
-		if (!game?.solved) return;
-		if (!reshaping && !unreshaped) unreshaped = game.unfolded.map((p) => ({ ...p }));
-		reshaping = !reshaping;
-		if (!reshaping) drawCard();
+	// finishing the day pops the card up, once the paper has unfolded
+	$effect(() => {
+		if (!result || !onLastRung || !game?.solved) return;
+		untrack(() => loadCorners());
+		const timer = setTimeout(() => (cardOpen = true), 1500);
+		return () => clearTimeout(timer);
+	});
+
+	function openCard(): void {
+		if (!corners) loadCorners();
+		cardOpen = true;
+	}
+
+	function closeCard(): void {
+		cardOpen = editing = false;
+	}
+
+	function saveCorners(next: Point[]): void {
+		corners = next;
+		try {
+			localStorage.setItem(shapeKey(), JSON.stringify(next.map((p) => ({ x: +p.x.toFixed(4), y: +p.y.toFixed(4) }))));
+		} catch {
+			// kept for this visit
+		}
 	}
 
 	function resetShape(): void {
-		if (!game || !unreshaped) return;
-		unreshaped.forEach((p, v) => (game!.unfolded[v] = { ...p }));
-		board?.refresh();
-		saveShape(game.unfolded);
-	}
-
-	function saveShape(corners: Point[]): void {
+		if (unfoldedCorners) saveCorners(unfoldedCorners);
 		try {
-			localStorage.setItem(shapeKey(), JSON.stringify(corners.map((p) => ({ x: +p.x.toFixed(4), y: +p.y.toFixed(4) }))));
+			localStorage.removeItem(shapeKey());
 		} catch {
-			// the card still has it for now
+			// nothing saved to forget
 		}
-		drawCard();
 	}
 
 	async function share(): Promise<void> {
-		if (!card || !result) return;
-		const outcome = await shareCard(card.blob, shareText(result, location.origin + location.pathname));
+		const svg = cardView?.element();
+		if (!svg || !result) return;
+		editing = false;
+		const outcome = await shareCard(await toPng(svg), shareText(result, location.origin + location.pathname));
 		if (outcome === 'copied') flash('card copied');
 		else if (outcome === 'downloaded') flash('card saved');
 	}
@@ -182,8 +188,7 @@
 	function jump(step: 1 | -1): void {
 		const level = neighbour(step);
 		if (!game || level === undefined) return;
-		reshaping = false;
-		unreshaped = undefined;
+		closeCard();
 		shelf.set(game.level, game);
 		game = shelf.get(level) ?? Game.ofSeed(game.seed, level);
 		shelf.delete(level);
@@ -201,8 +206,7 @@
 			return;
 		}
 		restartAsked = false;
-		reshaping = false;
-		unreshaped = undefined;
+		closeCard();
 		const { seed, level } = game;
 		game.free();
 		game = Game.ofSeed(seed, level);
@@ -227,6 +231,11 @@
 
 	function onkeydown(e: KeyboardEvent): void {
 		if (!game || e.metaKey || e.ctrlKey || e.altKey) return;
+		// the card, while it's up, takes the keyboard
+		if (cardOpen) {
+			if (e.key === 'Escape') closeCard();
+			return;
+		}
 		if (e.key !== 'r') restartAsked = false;
 		const keys: Record<string, () => void> = {
 			ArrowLeft: () => game!.step(1),
@@ -276,7 +285,7 @@
 
 	<div class="board">
 		{#if game}
-			<Board bind:this={board} {game} {showCursor} reshape={reshaping} onreshape={saveShape} />
+			<Board {game} {showCursor} />
 		{:else if failed}
 			<p class="loading">This browser couldn't load the puzzle.</p>
 		{:else}
@@ -290,8 +299,6 @@
 				<strong>Press restart again to start over</strong>
 			{:else if notice}
 				{notice}
-			{:else if reshaping}
-				Drag the corners to reshape it. Flip a flap to show its other side.
 			{:else if game.solved}
 				<strong>
 					Solved in {game.moves} {game.moves === 1 ? 'move' : 'moves'}{game.moves <= game.par ? ', par!' : ` (par ${game.par})`}{game.newBest
@@ -305,21 +312,11 @@
 		</p>
 
 		{#if result && onLastRung}
-			<section class="done" aria-label="Today's result">
-				<p class="total">
-					Today: <strong>{result.moves.reduce((a, b) => a + b, 0)} moves</strong>, par {result.pars.reduce((a, b) => a + b, 0)}
-					<span class="squares">{squares(result)}</span>
-				</p>
-				{#if card}<img class="card" src={card.url} alt="Your share card: today's finished shape and score" />{/if}
-				<nav>
-					<button class="primary" onclick={share} disabled={!card}>share</button>
-					<button onclick={copyText}>copy text</button>
-					{#if game.solved}
-						<button class:primary={reshaping} onclick={toggleReshape}>{reshaping ? 'done reshaping' : 'reshape'}</button>
-						{#if reshaping}<button onclick={resetShape}>reset shape</button>{/if}
-					{/if}
-				</nav>
-			</section>
+			<p class="total">
+				Today: <strong>{total(result.moves)} moves</strong>, par {total(result.pars)}
+				<span class="squares">{squares(result)}</span>
+			</p>
+			<button class="primary" onclick={openCard}>your card</button>
 		{/if}
 
 		<nav>
@@ -335,9 +332,46 @@
 			Drag dots around the circle until no creases cross.<br />
 			<span class="keys">Keys: ← → move · space pick up / set down · esc put back · [ ] levels · r restart · c copy</span>
 		</p>
-		<p class="hint"><a href="mystery">Try the mystery prototype →</a></p>
 	{/if}
 </main>
+
+{#if cardOpen && result && corners && game}
+	<div class="overlay" role="presentation" onclick={(e) => e.target === e.currentTarget && closeCard()}>
+		<div class="sheet" role="dialog" aria-modal="true" aria-label="Your card">
+			<button class="close" onclick={closeCard} aria-label="Close">×</button>
+			<Card
+				bind:this={cardView}
+				{result}
+				flaps={game.flaps}
+				faceUp={game.faceUp}
+				{corners}
+				host={location.host}
+				{editing}
+				onchange={saveCorners}
+			/>
+			<p class="hint">
+				{#if editing}
+					Drag the corners to reshape it. Pull a flap over to show the paper's other side.
+				{:else}
+					Share it, or reshape it first with the pencil.
+				{/if}
+			</p>
+			<nav>
+				<button class="icon" class:primary={editing} onclick={() => (editing = !editing)} aria-pressed={editing} aria-label="Reshape">
+					<svg viewBox="0 0 24 24" aria-hidden="true"
+						><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" /></svg
+					>
+				</button>
+				{#if editing}
+					<button onclick={resetShape}>reset</button>
+				{/if}
+				<button class="primary" onclick={share}>share</button>
+				<button onclick={copyText}>copy text</button>
+			</nav>
+			{#if notice}<p class="hint">{notice}</p>{/if}
+		</div>
+	</div>
+{/if}
 
 <style>
 	main {
@@ -383,16 +417,6 @@
 	.status strong {
 		color: var(--accent);
 	}
-	.done {
-		width: 100%;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.75rem;
-		padding: 1rem 0;
-		border-top: 1px solid var(--line);
-		border-bottom: 1px solid var(--line);
-	}
 	.total {
 		margin: 0;
 		text-align: center;
@@ -403,10 +427,68 @@
 		letter-spacing: 0.1em;
 		margin-top: 0.25rem;
 	}
-	.card {
-		width: min(100%, 18rem);
-		border-radius: 0.75rem;
-		box-shadow: 0 0.5rem 1.5rem rgb(60 45 25 / 0.18);
+	.overlay {
+		position: fixed;
+		inset: 0;
+		z-index: 10;
+		display: grid;
+		place-items: center;
+		padding: 1rem;
+		background: rgb(20 15 10 / 0.45);
+		backdrop-filter: blur(3px);
+		-webkit-backdrop-filter: blur(3px);
+		animation: fade-in 0.25s ease-out;
+	}
+	.sheet {
+		position: relative;
+		width: min(100%, 28rem);
+		max-height: 100%;
+		overflow-y: auto;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.75rem;
+		/* room at the top for the close button, clear of the card */
+		padding: 2.75rem 1rem 1rem;
+		border-radius: 1.5rem;
+		background: var(--bg);
+		box-shadow: 0 1rem 3rem rgb(0 0 0 / 0.3);
+		animation: pop-in 0.35s cubic-bezier(0.2, 1.3, 0.4, 1);
+	}
+	.close {
+		position: absolute;
+		top: 0.4rem;
+		right: 0.4rem;
+		z-index: 1;
+		min-width: 0;
+		width: 2.25rem;
+		height: 2.25rem;
+		padding: 0;
+		font-size: 1.4rem;
+		line-height: 1;
+		border-color: transparent;
+		background: transparent;
+		color: var(--muted);
+	}
+	button.icon {
+		display: grid;
+		place-items: center;
+		padding: 0.45rem 0.8rem;
+	}
+	button.icon svg {
+		width: 1.25rem;
+		height: 1.25rem;
+	}
+	@keyframes fade-in {
+		from {
+			opacity: 0;
+		}
+	}
+	@keyframes pop-in {
+		from {
+			opacity: 0;
+			transform: translateY(1.5rem) scale(0.96);
+		}
 	}
 	nav {
 		display: flex;

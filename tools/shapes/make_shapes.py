@@ -1,4 +1,5 @@
-"""Turns animal emoji into mystery-shape levels for the web game.
+"""Turns animal emoji into mystery-shape levels (a prototype since removed from the web game;
+its page and data are in git history before the removal, and core still has Puzzle::from_sheet).
 
 Each emoji (Google's Noto Emoji, Apache 2.0) is traced to its outline, simplified to a few
 corners per level, cut into the fattest triangles that outline allows, and each triangle is
