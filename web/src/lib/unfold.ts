@@ -18,9 +18,9 @@ export function today(): number {
 	return Math.floor(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) / 86_400_000);
 }
 
-/** Like "Nov 9, 2026", in the reader's own style. */
-export function formatDay(day: number): string {
-	return new Date(day * 86_400_000).toLocaleDateString(undefined, {
+/** Like "Nov 9, 2026", in the given language. */
+export function formatDay(day: number, locale: string): string {
+	return new Date(day * 86_400_000).toLocaleDateString(locale, {
 		timeZone: 'UTC',
 		year: 'numeric',
 		month: 'short',

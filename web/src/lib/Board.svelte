@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Game } from './game.svelte';
 	import { svgPoint } from './geometry';
+	import { t } from './i18n/index.svelte';
 	import Paper from './Paper.svelte';
 	import type { Point } from './unfold';
 
@@ -163,7 +164,7 @@
 	class="board"
 	class:dragging={drag !== undefined}
 	role="application"
-	aria-label="Puzzle board: {game.crossings} crossings, {game.moves} moves"
+	aria-label={t().board(game.crossings, game.moves)}
 	{onpointerdown}
 	{onpointermove}
 	{onpointerup}

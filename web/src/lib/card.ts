@@ -1,5 +1,6 @@
 import regular from '@fontsource/courier-prime/files/courier-prime-latin-400-normal.woff2?url';
 import bold from '@fontsource/courier-prime/files/courier-prime-latin-700-normal.woff2?url';
+import { t } from './i18n/index.svelte';
 
 export type Result = {
 	/** Like "Nov 10, 2026", in the reader's locale. */
@@ -17,8 +18,8 @@ export const FONT = '"Courier Prime", "Courier New", monospace';
 
 /** Like "9 moves (+3)", over the fewest it can be done in, or "6 moves · perfect". */
 export function score(moves: number, par: number): string {
-	const count = `${moves} ${moves === 1 ? 'move' : 'moves'}`;
-	return moves <= par ? `${count} · perfect` : `${count} (+${moves - par})`;
+	const m = t();
+	return moves <= par ? m.perfect(m.moves(moves)) : m.over(m.moves(moves), moves - par);
 }
 
 /** The result as text ending with the link, which is what people tap. */

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { FIRE } from './Icon.svelte';
+	import { t } from './i18n/index.svelte';
 	import Paper from './Paper.svelte';
 	import { FONT, SIZE, score, type Result } from './card';
 	import { nearestTo, svgPoint, trianglePath } from './geometry';
@@ -38,9 +39,7 @@
 	/** How far from the middle a corner can be dragged, and how near a press must be to grab one. */
 	const REACH = 1.15;
 	const GRAB = 0.22;
-	/** The result line's size, and Courier Prime's advance as a fraction of it, being monospaced. */
 	const LINE = 48;
-	const ADVANCE = 0.6;
 	const FLAME = 46;
 	const HINT_DELAY = 700;
 	const HINT_LENGTH = 1100;
@@ -96,14 +95,25 @@
 		};
 	});
 
+	let scoreText = $state<SVGTextElement | undefined>(undefined);
+	let countText = $state<SVGTextElement | undefined>(undefined);
+	/** The drawn widths of the score and the streak count, measured since any language's glyphs may appear. */
+	let widths = $state({ score: 0, count: 0 });
+
+	const texts = $derived({
+		text: result.streak ? `${score(result.moves, result.par)} · ` : score(result.moves, result.par),
+		count: result.streak ? String(result.streak) : ''
+	});
+
+	$effect(() => {
+		void texts;
+		widths = { score: scoreText?.getComputedTextLength() ?? 0, count: countText?.getComputedTextLength() ?? 0 };
+	});
+
 	/** The result line, then the streak's flame and count, laid out as one centered row. */
 	const line = $derived.by(() => {
-		const text = result.streak ? `${score(result.moves, result.par)} · ` : score(result.moves, result.par);
-		const count = result.streak ? String(result.streak) : '';
-		const width = (text.length + count.length) * LINE * ADVANCE + (count ? FLAME : 0);
-		const x = CX - width / 2;
-		const flameX = x + text.length * LINE * ADVANCE;
-		return { text, count, x, flameX, countX: flameX + FLAME };
+		const x = CX - (widths.score + (texts.count ? FLAME + widths.count : 0)) / 2;
+		return { ...texts, x, flameX: x + widths.score, countX: x + widths.score + FLAME };
 	});
 
 	const silhouette = $derived(flaps.map((f) => trianglePath(f.map((v) => pos[v]))).join(''));
@@ -158,7 +168,7 @@
 	class:grabbing={dragging !== undefined}
 	viewBox="0 0 {SIZE} {SIZE}"
 	role="img"
-	aria-label="Share card: {result.date}, {score(result.moves, result.par)}{result.streak ? `, ${result.streak} day streak` : ''}"
+	aria-label={t().cardLabel(result.date, score(result.moves, result.par)) + (result.streak ? `, ${t().streak(result.streak)}` : '')}
 	{onpointerdown}
 	{onpointermove}
 	{onpointerup}
@@ -188,10 +198,10 @@
 	</g>
 
 	<g fill={LIGHT.text} font-family={FONT} font-size={LINE} font-weight="700">
-		<text x={line.x} y="960">{line.text}</text>
+		<text bind:this={scoreText} x={line.x} y="960" xml:space="preserve">{line.text}</text>
 		{#if line.count}
 			<path d={FIRE} transform="translate({line.flameX} {960 - FLAME * 0.86}) scale({FLAME / 24})" />
-			<text x={line.countX} y="960">{line.count}</text>
+			<text bind:this={countText} x={line.countX} y="960">{line.count}</text>
 		{/if}
 	</g>
 	<text x={CX} y="1024" fill={LIGHT.muted} font-family={FONT} font-size="30" text-anchor="middle">{host}</text>

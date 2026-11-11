@@ -12,6 +12,7 @@
 	import { accentFor } from '#lib/accent.ts';
 	import { swanUrl } from '#lib/favicon.ts';
 	import { CARD_BAR, DARK, LIGHT } from '#lib/theme.ts';
+	import { LOCALES, locale, setLocale, t, type Locale } from '#lib/i18n/index.svelte.ts';
 
 	const RESTART_TIME = 2000;
 	const NOTICE_TIME = 1500;
@@ -53,7 +54,7 @@
 		void scored;
 		if (!daily || !game || day === undefined) return;
 		const moves = bestMoves(game.code);
-		return moves === undefined ? undefined : { date: formatDay(day), moves, par: game.par, streak: streak(day) };
+		return moves === undefined ? undefined : { date: formatDay(day, locale()), moves, par: game.par, streak: streak(day) };
 	});
 	const streakDays = $derived.by(() => {
 		void scored;
@@ -118,7 +119,7 @@
 
 	$effect(() => {
 		if (!cardOpen || !cardView) return;
-		void [corners, order];
+		void [corners, order, locale()];
 		tick().then(() => {
 			const svg = cardView?.element();
 			if (svg) png = toPng(svg);
@@ -194,14 +195,14 @@
 	async function share(): Promise<void> {
 		if (!png || !result) return;
 		const outcome = await shareCard(await png, shareText(result, here()));
-		if (outcome === 'copied') flash('card copied');
-		else if (outcome === 'downloaded') flash('card saved');
+		if (outcome === 'copied') flash(t().cardCopied);
+		else if (outcome === 'downloaded') flash(t().cardSaved);
 	}
 
 	async function shareResultLink(): Promise<void> {
 		if (!result) return;
 		const outcome = await shareLink(shareText(result, here()));
-		if (outcome === 'copied') flash('link copied');
+		if (outcome === 'copied') flash(t().linkCopied);
 		else if (outcome === 'failed') flash(shareText(result, here()));
 	}
 
@@ -271,7 +272,7 @@
 			']': () => jump(1),
 			r: restart,
 			'?': () => (helpOpen = true),
-			c: () => copy(`${here()}#${g.code}`, 'link copied')
+			c: () => copy(`${here()}#${g.code}`, t().linkCopied)
 		};
 		const act = keys[e.key];
 		if (!act) return;
@@ -288,8 +289,8 @@
 		<h1>unfold</h1>
 		{#if game}
 			<p class="meta">
-				{daily && day !== undefined ? formatDay(day) : `level ${game.level}`} · solvable in {game.par}
-				{#if streakDays}<span class="streak" aria-label="{streakDays} day streak">· <Icon name="fire" />{streakDays}</span>{/if}
+				{daily && day !== undefined ? formatDay(day, locale()) : t().level(game.level)} · {t().solvableIn(game.par)}
+				{#if streakDays}<span class="streak" aria-label={t().streak(streakDays)}>· <Icon name="fire" />{streakDays}</span>{/if}
 				{#if !daily}<span class="code">{game.code}</span>{/if}
 			</p>
 		{/if}
@@ -299,42 +300,40 @@
 		{#if game}
 			<Board {game} {showCursor} />
 		{:else if failed}
-			<p class="loading">This browser couldn't load the puzzle.</p>
+			<p class="loading">{t().failed}</p>
 		{:else}
-			<p class="loading">folding…</p>
+			<p class="loading">{t().loading}</p>
 		{/if}
 	</div>
 
 	{#if game}
 		<p class="status" aria-live="polite">
 			{#if restartAsked}
-				<strong>Press restart again to start over</strong>
+				<strong>{t().restartAgain}</strong>
 			{:else if notice}
 				{notice}
 			{:else if game.solved}
-				<strong>
-					Solved in {score(game.moves, game.par)}
-				</strong>
+				<strong>{t().solved(score(game.moves, game.par))}</strong>
 			{:else}
-				{game.moves} {game.moves === 1 ? 'move' : 'moves'}
+				{t().moves(game.moves)}
 			{/if}
 		</p>
 
 		<nav>
 			{#if !daily}
-				<button onclick={() => jump(-1)} disabled={neighbour(-1) === undefined} aria-label="Previous level">‹</button>
+				<button onclick={() => jump(-1)} disabled={neighbour(-1) === undefined} aria-label={t().previousLevel}>‹</button>
 			{/if}
-			<button class="icon" onclick={restart} aria-label={game.solved ? 'Replay' : 'Restart'} title={game.solved ? 'Replay' : 'Restart'}><Icon name="reset" /></button>
+			<button class="icon" onclick={restart} aria-label={game.solved ? t().replay : t().restart} title={game.solved ? t().replay : t().restart}><Icon name="reset" /></button>
 			{#if result}
-				<button class="icon primary" onclick={openCard} aria-label="Your card" title="Your card"><Icon name="share" /></button>
+				<button class="icon primary" onclick={openCard} aria-label={t().yourCard} title={t().yourCard}><Icon name="share" /></button>
 			{:else}
-				<button class="icon" onclick={() => game && copy(`${here()}#${game.code}`, 'link copied')} aria-label="Copy link" title="Copy link"
+				<button class="icon" onclick={() => game && copy(`${here()}#${game.code}`, t().linkCopied)} aria-label={t().copyLink} title={t().copyLink}
 					><Icon name="link" /></button
 				>
 			{/if}
-			<button class="icon" onclick={() => (helpOpen = true)} aria-label="How to play" title="How to play"><Icon name="help" /></button>
+			<button class="icon" onclick={() => (helpOpen = true)} aria-label={t().howToPlay} title={t().howToPlay}><Icon name="help" /></button>
 			{#if !daily}
-				<button class:primary={game.solved} onclick={() => jump(1)} aria-label="Next level">{game.solved ? 'next level ›' : '›'}</button>
+				<button class:primary={game.solved} onclick={() => jump(1)} aria-label={t().nextLevel}>{game.solved ? `${t().nextLevel} ›` : '›'}</button>
 			{/if}
 		</nav>
 
@@ -343,32 +342,38 @@
 
 {#if helpOpen}
 	<div class="overlay" role="presentation" onclick={(e) => e.target === e.currentTarget && (helpOpen = false)}>
-		<div class="sheet help-sheet" role="dialog" aria-modal="true" aria-label="How to play">
-			<button class="icon close" onclick={() => (helpOpen = false)} aria-label="Close"><Icon name="close" /></button>
-			<h2>How to play</h2>
-			<p>The paper is folded up around a circle. Move its dots until no creases cross, and it unfolds.</p>
-			<p>Drag a dot along the circle; the others shift over to make room. Setting a dot down somewhere new is a move.</p>
-			<p>"Solvable in 6" is the fewest moves it can be done in; each move over shows as +1. The fire counts the days in a row you've solved. There's a new puzzle every day.</p>
-			<p>When it's solved, share your card. Drag its corners to fold the paper into a shape of your own first.</p>
-			<dl class="keys">
-				<dt>← →</dt>
-				<dd>move around the circle</dd>
-				<dt>space</dt>
-				<dd>pick up, set down</dd>
-				<dt>esc</dt>
-				<dd>put back</dd>
-				<dt>r</dt>
-				<dd>restart</dd>
-				<dt>c</dt>
-				<dd>copy link</dd>
-			</dl>
+		<div class="pop help-pop" role="dialog" aria-modal="true" aria-label={t().howToPlay}>
+			<div class="sheet help-sheet">
+				<div class="languages" role="radiogroup" aria-label={t().language}>
+					{#each Object.entries(LOCALES) as [code, m] (code)}
+						<button role="radio" aria-checked={locale() === code} class:on={locale() === code} onclick={() => setLocale(code as Locale)}>{m.name}</button>
+					{/each}
+				</div>
+				<h2>{t().howToPlay}</h2>
+				{#each t().help as paragraph, i (i)}
+					<p>{paragraph}</p>
+				{/each}
+				<dl class="keys">
+					<dt>← →</dt>
+					<dd>{t().keys.move}</dd>
+					<dt>space</dt>
+					<dd>{t().keys.select}</dd>
+					<dt>esc</dt>
+					<dd>{t().keys.putBack}</dd>
+					<dt>r</dt>
+					<dd>{t().keys.restart}</dd>
+					<dt>c</dt>
+					<dd>{t().keys.copy}</dd>
+				</dl>
+			</div>
+			<button class="icon close" onclick={() => (helpOpen = false)} aria-label={t().close}><Icon name="close" /></button>
 		</div>
 	</div>
 {/if}
 
 {#if cardOpen && result && corners && game}
 	<div class="overlay" role="presentation" onclick={(e) => e.target === e.currentTarget && closeCard()}>
-		<div class="card-pop" role="dialog" aria-modal="true" aria-label="Your card">
+		<div class="pop card-pop" role="dialog" aria-modal="true" aria-label={t().yourCard}>
 			<div class="frame">
 				<Card
 					bind:this={cardView}
@@ -381,19 +386,19 @@
 					hint={!readJson<boolean>(RESHAPED_KEY)}
 					onchange={saveShape}
 				/>
-				<div class="bar" role="toolbar" aria-label="Card" style:background={CARD_BAR}>
-					<button class="icon" onclick={resetShape} disabled={!reshaped} aria-label="Reset shape" title="Reset shape">
+				<div class="bar" role="toolbar" aria-label={t().cardTools} style:background={CARD_BAR}>
+					<button class="icon" onclick={resetShape} disabled={!reshaped} aria-label={t().resetShape} title={t().resetShape}>
 						<Icon name="reset" />
 					</button>
-					<button class="icon share" onclick={share} aria-label="Share card" title="Share card">
+					<button class="icon share" onclick={share} aria-label={t().shareCard} title={t().shareCard}>
 						<Icon name="share" />
 					</button>
-					<button class="icon" onclick={shareResultLink} aria-label="Share link" title="Share link">
+					<button class="icon" onclick={shareResultLink} aria-label={t().shareLink} title={t().shareLink}>
 						<Icon name="link" />
 					</button>
 				</div>
 			</div>
-			<button class="icon close" onclick={closeCard} aria-label="Close"><Icon name="close" /></button>
+			<button class="icon close" onclick={closeCard} aria-label={t().close}><Icon name="close" /></button>
 			<p class="notice" aria-live="polite">{notice}</p>
 		</div>
 	</div>
@@ -469,31 +474,51 @@
 		-webkit-backdrop-filter: blur(3px);
 		animation: fade-in 0.25s ease-out;
 	}
-	.sheet {
+	.pop {
 		position: relative;
 		width: min(100%, 28rem);
-		max-height: 100%;
+		animation: pop-in 0.35s cubic-bezier(0.2, 1.3, 0.4, 1);
+	}
+	.pop button.close {
+		position: absolute;
+		top: -0.9rem;
+		right: -0.9rem;
+		width: 2.25rem;
+		height: 2.25rem;
+		border: 1px solid var(--line);
+		background: var(--button);
+		color: var(--text);
+		box-shadow: 0 0.15rem 0.5rem rgb(0 0 0 / 0.25);
+	}
+	.sheet {
+		max-height: calc(100svh - 2rem);
 		overflow-y: auto;
 		display: flex;
 		flex-direction: column;
-		align-items: center;
-		gap: 0.5rem;
-		padding: 2.75rem 1rem 0.75rem;
 		border-radius: 1.5rem;
 		background: var(--bg);
 		box-shadow: 0 1rem 3rem rgb(0 0 0 / 0.3);
-		animation: pop-in 0.35s cubic-bezier(0.2, 1.3, 0.4, 1);
 	}
-	button.close {
-		position: absolute;
-		top: 0.4rem;
-		right: 0.4rem;
-		z-index: 1;
-		width: 2.25rem;
-		height: 2.25rem;
-		border-color: transparent;
+	.languages {
+		display: flex;
+		align-self: flex-start;
+		gap: 0.25rem;
+		margin-bottom: 1rem;
+		padding: 0.2rem;
+		border-radius: 999px;
+		background: var(--line);
+	}
+	.languages button {
+		min-width: 0;
+		padding: 0.25rem 0.8rem;
+		border: none;
 		background: transparent;
 		color: var(--muted);
+		font-size: 0.85rem;
+	}
+	.languages button.on {
+		background: var(--button);
+		color: var(--text);
 	}
 	.help-sheet {
 		align-items: stretch;
@@ -526,17 +551,7 @@
 		margin: 0;
 	}
 	.card-pop {
-		position: relative;
 		width: min(100%, 28rem, calc(100svh - 8rem));
-		animation: pop-in 0.35s cubic-bezier(0.2, 1.3, 0.4, 1);
-	}
-	.card-pop .close {
-		top: -0.9rem;
-		right: -0.9rem;
-		border: 1px solid var(--line);
-		background: var(--button);
-		color: var(--text);
-		box-shadow: 0 0.15rem 0.5rem rgb(0 0 0 / 0.25);
 	}
 	.card-pop .notice {
 		position: absolute;
