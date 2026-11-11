@@ -3,6 +3,7 @@
 	import { replaceState } from '$app/navigation';
 	import Board from '#lib/Board.svelte';
 	import Card from '#lib/Card.svelte';
+	import Icon from '#lib/Icon.svelte';
 	import { Game } from '#lib/game.svelte.ts';
 	import { dailyLevel, dailySeed, formatDay, loadCore, paperColors, parseCode, today, type Point } from '#lib/unfold.ts';
 	import { bestMoves } from '#lib/scores.ts';
@@ -23,6 +24,7 @@
 	let paper = $state.raw<string[]>([]);
 	let dark = $state(false);
 	let cardOpen = $state(false);
+	let helpOpen = $state(false);
 	let editing = $state(false);
 	/** The card's shape as reshaped, and as it first unfolded. */
 	let corners = $state.raw<Point[] | undefined>(undefined);
@@ -237,8 +239,8 @@
 
 	function onkeydown(e: KeyboardEvent): void {
 		if (!game || e.metaKey || e.ctrlKey || e.altKey) return;
-		if (cardOpen) {
-			if (e.key === 'Escape') closeCard();
+		if (cardOpen || helpOpen) {
+			if (e.key === 'Escape') cardOpen = helpOpen = editing = false;
 			return;
 		}
 		if (e.key !== 'r') restartAsked = false;
@@ -255,6 +257,7 @@
 			'[': () => jump(-1),
 			']': () => jump(1),
 			r: restart,
+			'?': () => (helpOpen = true),
 			c: () => copy(`${here()}#${g.code}`, 'link copied')
 		};
 		const act = keys[e.key];
@@ -274,6 +277,7 @@
 
 <main>
 	<header>
+		<button class="icon help" onclick={() => (helpOpen = true)} aria-label="How to play" title="How to play"><Icon name="help" /></button>
 		<h1>unfold</h1>
 		{#if game}
 			<p class="meta">
@@ -317,28 +321,51 @@
 			{#if !daily}
 				<button onclick={() => jump(-1)} disabled={neighbour(-1) === undefined} aria-label="Previous level">‹</button>
 			{/if}
-			<button onclick={restart}>{game.solved ? 'replay' : 'restart'}</button>
+			<button class="icon" onclick={restart} aria-label={game.solved ? 'Replay' : 'Restart'} title={game.solved ? 'Replay' : 'Restart'}><Icon name="reset" /></button>
 			{#if result}
-				<button class="primary" onclick={openCard}>your card</button>
+				<button class="icon primary" onclick={openCard} aria-label="Your card" title="Your card"><Icon name="share" /></button>
 			{:else}
-				<button onclick={() => game && copy(`${here()}#${game.code}`, 'link copied')}>copy link</button>
+				<button class="icon" onclick={() => game && copy(`${here()}#${game.code}`, 'link copied')} aria-label="Copy link" title="Copy link"
+					><Icon name="link" /></button
+				>
 			{/if}
 			{#if !daily}
 				<button class:primary={game.solved} onclick={() => jump(1)} aria-label="Next level">{game.solved ? 'next level ›' : '›'}</button>
 			{/if}
 		</nav>
 
-		<p class="hint">
-			Drag dots around the circle until no creases cross.<br />
-			<span class="keys">Keys: ← → move · space pick up / set down · esc put back · r restart · c copy</span>
-		</p>
 	{/if}
 </main>
+
+{#if helpOpen}
+	<div class="overlay" role="presentation" onclick={(e) => e.target === e.currentTarget && (helpOpen = false)}>
+		<div class="sheet help-sheet" role="dialog" aria-modal="true" aria-label="How to play">
+			<button class="close" onclick={() => (helpOpen = false)} aria-label="Close"><Icon name="close" /></button>
+			<h2>How to play</h2>
+			<p>The paper is folded up around a circle. Move its dots until no creases cross, and it unfolds.</p>
+			<p>Drag a dot along the circle; the others shift over to make room. Setting a dot down somewhere new is a move.</p>
+			<p>Par is the fewest moves the puzzle can be solved in. There's a new one every day.</p>
+			<p>When it's solved, share your card. The pencil lets you fold the paper into a shape of your own first.</p>
+			<dl class="keys">
+				<dt>← →</dt>
+				<dd>move around the circle</dd>
+				<dt>space</dt>
+				<dd>pick up, set down</dd>
+				<dt>esc</dt>
+				<dd>put back</dd>
+				<dt>r</dt>
+				<dd>restart</dd>
+				<dt>c</dt>
+				<dd>copy link</dd>
+			</dl>
+		</div>
+	</div>
+{/if}
 
 {#if cardOpen && result && corners && game}
 	<div class="overlay" role="presentation" onclick={(e) => e.target === e.currentTarget && closeCard()}>
 		<div class="sheet" role="dialog" aria-modal="true" aria-label="Your card">
-			<button class="close" onclick={closeCard} aria-label="Close">×</button>
+			<button class="close" onclick={closeCard} aria-label="Close"><Icon name="close" /></button>
 			<div class="frame">
 				<Card
 					bind:this={cardView}
@@ -353,20 +380,16 @@
 				/>
 				<div class="bar" role="toolbar" aria-label="Card">
 					<button class:on={editing} onclick={() => (editing = !editing)} aria-pressed={editing} aria-label="Reshape" title="Reshape">
-						<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4Z" /></svg>
+						<Icon name="pencil" />
 					</button>
 					<button onclick={resetShape} aria-label="Reset shape" title="Reset shape">
-						<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4 4v5h5" /></svg>
+						<Icon name="reset" />
 					</button>
 					<button onclick={share} aria-label="Share card" title="Share card">
-						<svg viewBox="0 0 24 24" aria-hidden="true"
-							><circle cx="18" cy="5" r="2.5" /><circle cx="6" cy="12" r="2.5" /><circle cx="18" cy="19" r="2.5" /><path d="M8.2 10.8l7.6-4.6M8.2 13.2l7.6 4.6" /></svg
-						>
+						<Icon name="share" />
 					</button>
 					<button onclick={shareResultLink} aria-label="Share link" title="Share link">
-						<svg viewBox="0 0 24 24" aria-hidden="true"
-							><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" /></svg
-						>
+						<Icon name="link" />
 					</button>
 				</div>
 			</div>
@@ -386,7 +409,24 @@
 		gap: 0.75rem;
 	}
 	header {
+		position: relative;
+		width: 100%;
 		text-align: center;
+	}
+	.help {
+		position: absolute;
+		top: 0;
+		right: 0;
+		border-color: transparent;
+		background: transparent;
+		color: var(--muted);
+	}
+	button.icon {
+		display: grid;
+		place-items: center;
+		width: 2.75rem;
+		height: 2.75rem;
+		padding: 0;
 	}
 	h1 {
 		margin: 0;
@@ -461,11 +501,41 @@
 		width: 2.25rem;
 		height: 2.25rem;
 		padding: 0;
-		font-size: 1.4rem;
-		line-height: 1;
+		display: grid;
+		place-items: center;
 		border-color: transparent;
 		background: transparent;
 		color: var(--muted);
+	}
+	.help-sheet {
+		align-items: stretch;
+		gap: 0;
+		padding: 1.5rem 1.5rem 1.25rem;
+		line-height: 1.5;
+	}
+	.help-sheet h2 {
+		margin: 0 0 0.75rem;
+		font-size: 1.3rem;
+	}
+	.help-sheet p {
+		margin: 0 0 0.75rem;
+	}
+	.keys {
+		display: grid;
+		grid-template-columns: auto 1fr;
+		gap: 0.25rem 1rem;
+		margin: 0.5rem 0 0;
+		padding-top: 0.75rem;
+		border-top: 1px solid var(--line);
+		color: var(--muted);
+		font-size: 0.9rem;
+	}
+	.keys dt {
+		font-weight: 700;
+		color: var(--text);
+	}
+	.keys dd {
+		margin: 0;
 	}
 	.frame {
 		width: 100%;
@@ -493,15 +563,6 @@
 	.bar button.on {
 		background: #3a352f;
 		color: #f4f0e8;
-	}
-	.bar svg {
-		width: 1.4rem;
-		height: 1.4rem;
-		fill: none;
-		stroke: currentColor;
-		stroke-width: 1.8;
-		stroke-linecap: round;
-		stroke-linejoin: round;
 	}
 	.notice {
 		margin: 0;
@@ -545,14 +606,7 @@
 		border-color: var(--accent);
 		color: var(--on-accent);
 	}
-	.hint {
-		margin: 0.5rem 0 0;
-		text-align: center;
-		color: var(--muted);
-		font-size: 0.85rem;
-		line-height: 1.5;
-	}
-	@media (hover: none) {
+	@media (hover: none), (pointer: coarse) {
 		.keys {
 			display: none;
 		}
