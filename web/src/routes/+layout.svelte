@@ -9,6 +9,7 @@
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
+	<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 	<meta name="color-scheme" content="light dark" />
 	<meta name="theme-color" content="#ebe4d6" media="(prefers-color-scheme: light)" />
 	<meta name="theme-color" content="#3d3833" media="(prefers-color-scheme: dark)" />
