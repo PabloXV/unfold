@@ -139,7 +139,7 @@ pub fn daily_seed(day: u32) -> u32 {
 #[wasm_bindgen(js_name = paperColors)]
 pub fn paper_colors(seed: u32) -> Vec<String> {
     let (front, back) = uc::Seed(seed & uc::Seed::MASK).paper();
-    vec![front.to_string(), back.to_string()]
+    vec![front.color.to_string(), back.color.to_string()]
 }
 
 /// A code like ABC123/9 as [seed, level], or nothing if it isn't one.

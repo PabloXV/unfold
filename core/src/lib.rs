@@ -41,15 +41,14 @@ impl Seed {
         Xoshiro256PlusPlus::seed_from_u64((self.0 as u64) << 32 | level as u64)
     }
 
-    /// The paper's front and back colors for every level of this seed: soft, papery, and
-    /// clearly different from each other.
-    pub fn paper(self) -> (Color, Color) {
+    /// The paper's front and back for every level of this seed: two origami colors, clearly apart.
+    pub fn paper(self) -> (Kami, Kami) {
         let mut rng = Xoshiro256PlusPlus::seed_from_u64((self.0 as u64) << 32 | PAPER_STREAM);
-        let front = Oklch::paper(&mut rng);
+        let front = KAMI[rng.random_range(0..KAMI.len())];
         loop {
-            let back = Oklch::paper(&mut rng);
-            if front.distance(back) >= MIN_SIDE_DISTANCE {
-                return (front.srgb().unwrap(), back.srgb().unwrap());
+            let back = KAMI[rng.random_range(0..KAMI.len())];
+            if front.color.distance(back.color) >= MIN_SIDE_DISTANCE {
+                return (front, back);
             }
         }
     }
@@ -66,6 +65,75 @@ const PAPER_STREAM: u64 = 0xFFFF_FFFF;
 /// How far apart in OKLab the two sides must be: about ten times a just-noticeable difference.
 const MIN_SIDE_DISTANCE: f64 = 0.2;
 
+/// A sheet of origami paper by color.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Kami {
+    pub name: &'static str,
+    pub color: Color,
+}
+
+/// Colors as origami paper packs name them.
+pub const KAMI: [Kami; 58] = [
+    Kami { name: "white", color: Color::hex(0xfdfcf8) },
+    Kami { name: "ivory", color: Color::hex(0xf8f1dc) },
+    Kami { name: "cream", color: Color::hex(0xf6e7bf) },
+    Kami { name: "light gray", color: Color::hex(0xd3d3d1) },
+    Kami { name: "gray", color: Color::hex(0x949494) },
+    Kami { name: "charcoal", color: Color::hex(0x444446) },
+    Kami { name: "black", color: Color::hex(0x1c1c1c) },
+    Kami { name: "light pink", color: Color::hex(0xf7c6d1) },
+    Kami { name: "pink", color: Color::hex(0xf39ab4) },
+    Kami { name: "rose", color: Color::hex(0xe85a83) },
+    Kami { name: "magenta", color: Color::hex(0xd6297f) },
+    Kami { name: "red", color: Color::hex(0xd7192a) },
+    Kami { name: "vermilion", color: Color::hex(0xe8381e) },
+    Kami { name: "crimson", color: Color::hex(0xa8132f) },
+    Kami { name: "wine", color: Color::hex(0x6b1530) },
+    Kami { name: "peach", color: Color::hex(0xfbc29b) },
+    Kami { name: "salmon", color: Color::hex(0xf6907a) },
+    Kami { name: "coral", color: Color::hex(0xf06a4e) },
+    Kami { name: "orange", color: Color::hex(0xf07c1a) },
+    Kami { name: "tangerine", color: Color::hex(0xf9a12a) },
+    Kami { name: "apricot", color: Color::hex(0xf8b86a) },
+    Kami { name: "pale yellow", color: Color::hex(0xfbf0a8) },
+    Kami { name: "lemon", color: Color::hex(0xfbe74a) },
+    Kami { name: "yellow", color: Color::hex(0xfcd116) },
+    Kami { name: "mustard", color: Color::hex(0xd9ad1c) },
+    Kami { name: "ochre", color: Color::hex(0xc88f1c) },
+    Kami { name: "tan", color: Color::hex(0xc8a476) },
+    Kami { name: "beige", color: Color::hex(0xe8d6b5) },
+    Kami { name: "brown", color: Color::hex(0x7b4523) },
+    Kami { name: "chocolate", color: Color::hex(0x4a2a1a) },
+    Kami { name: "chartreuse", color: Color::hex(0xc4d82a) },
+    Kami { name: "yellow green", color: Color::hex(0x8cc63f) },
+    Kami { name: "leaf green", color: Color::hex(0x4fa43a) },
+    Kami { name: "green", color: Color::hex(0x00924a) },
+    Kami { name: "forest", color: Color::hex(0x1f5a35) },
+    Kami { name: "olive", color: Color::hex(0x7a7a2a) },
+    Kami { name: "sage", color: Color::hex(0xa4b98d) },
+    Kami { name: "mint", color: Color::hex(0xaee3c7) },
+    Kami { name: "emerald", color: Color::hex(0x00936d) },
+    Kami { name: "teal", color: Color::hex(0x007b7c) },
+    Kami { name: "turquoise", color: Color::hex(0x1fb5b5) },
+    Kami { name: "aqua", color: Color::hex(0x91dbd8) },
+    Kami { name: "light blue", color: Color::hex(0xb4dbf3) },
+    Kami { name: "sky blue", color: Color::hex(0x6fc1ea) },
+    Kami { name: "cornflower", color: Color::hex(0x5c86d9) },
+    Kami { name: "blue", color: Color::hex(0x1f63b8) },
+    Kami { name: "cobalt", color: Color::hex(0x12459c) },
+    Kami { name: "navy", color: Color::hex(0x172a5c) },
+    Kami { name: "indigo", color: Color::hex(0x2e2a73) },
+    Kami { name: "slate", color: Color::hex(0x5a6b84) },
+    Kami { name: "lavender", color: Color::hex(0xc3b3e3) },
+    Kami { name: "lilac", color: Color::hex(0xb28fcc) },
+    Kami { name: "mauve", color: Color::hex(0xa8789a) },
+    Kami { name: "violet", color: Color::hex(0x7a4fae) },
+    Kami { name: "purple", color: Color::hex(0x5b2585) },
+    Kami { name: "plum", color: Color::hex(0x6b2f5e) },
+    Kami { name: "gold", color: Color::hex(0xcaa13c) },
+    Kami { name: "bronze", color: Color::hex(0x9d6630) },
+];
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Color {
     pub r: u8,
@@ -73,68 +141,36 @@ pub struct Color {
     pub b: u8,
 }
 
+impl Color {
+    const fn hex(rgb: u32) -> Self {
+        Color { r: (rgb >> 16) as u8, g: (rgb >> 8) as u8, b: rgb as u8 }
+    }
+
+    /// In OKLab, where distance follows how different colors look.
+    fn oklab(self) -> [f64; 3] {
+        let [r, g, b] = [self.r, self.g, self.b].map(|v| {
+            let v = v as f64 / 255.0;
+            if v <= 0.040_45 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+        });
+        let l = (0.412_221_470_8 * r + 0.536_332_536_3 * g + 0.051_445_992_9 * b).cbrt();
+        let m = (0.211_903_498_2 * r + 0.680_699_545_1 * g + 0.107_396_956_6 * b).cbrt();
+        let s = (0.088_302_461_9 * r + 0.281_718_837_6 * g + 0.629_978_700_5 * b).cbrt();
+        [
+            0.210_454_255_3 * l + 0.793_617_785 * m - 0.004_072_046_8 * s,
+            1.977_998_495_1 * l - 2.428_592_205 * m + 0.450_593_709_9 * s,
+            0.025_904_037_1 * l + 0.782_771_766_2 * m - 0.808_675_766 * s,
+        ]
+    }
+
+    fn distance(self, o: Color) -> f64 {
+        let (a, b) = (self.oklab(), o.oklab());
+        a.iter().zip(b).map(|(x, y)| (x - y).powi(2)).sum::<f64>().sqrt()
+    }
+}
+
 impl fmt::Display for Color {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "#{:02x}{:02x}{:02x}", self.r, self.g, self.b)
-    }
-}
-
-/// A color by perceived lightness, chroma and hue in degrees.
-#[derive(Clone, Copy, Debug)]
-struct Oklch {
-    l: f64,
-    c: f64,
-    h: f64,
-}
-
-impl Oklch {
-    /// Any hue and lightness, at 20 to 70% of the most colorful a screen can show there, so never neon.
-    fn paper(rng: &mut impl Rng) -> Self {
-        let h = rng.random_range(0.0..360.0);
-        let l = rng.random_range(0.35..0.93);
-        let c = Oklch::max_chroma(l, h) * rng.random_range(0.2..0.7);
-        Oklch { l, c, h }
-    }
-
-    /// The most colorful a screen can show at this lightness and hue, by bisection.
-    fn max_chroma(l: f64, h: f64) -> f64 {
-        let (mut lo, mut hi) = (0.0, 0.4);
-        for _ in 0..24 {
-            let mid = (lo + hi) / 2.0;
-            if (Oklch { l, c: mid, h }).srgb().is_some() { lo = mid } else { hi = mid }
-        }
-        lo
-    }
-
-    fn lab(self) -> [f64; 3] {
-        let (sin, cos) = self.h.to_radians().sin_cos();
-        [self.l, self.c * cos, self.c * sin]
-    }
-
-    fn distance(self, o: Oklch) -> f64 {
-        let ([l1, a1, b1], [l2, a2, b2]) = (self.lab(), o.lab());
-        ((l1 - l2).powi(2) + (a1 - a2).powi(2) + (b1 - b2).powi(2)).sqrt()
-    }
-
-    /// In sRGB, if a screen can show it.
-    fn srgb(self) -> Option<Color> {
-        let [l, a, b] = self.lab();
-        let l_ = (l + 0.396_337_777_4 * a + 0.215_803_757_3 * b).powi(3);
-        let m_ = (l - 0.105_561_345_8 * a - 0.063_854_172_8 * b).powi(3);
-        let s_ = (l - 0.089_484_177_5 * a - 1.291_485_548 * b).powi(3);
-        let linear = [
-            4.076_741_662_1 * l_ - 3.307_711_591_3 * m_ + 0.230_969_929_2 * s_,
-            -1.268_438_004_6 * l_ + 2.609_757_401_1 * m_ - 0.341_319_396_5 * s_,
-            -0.004_196_086_3 * l_ - 0.703_418_614_7 * m_ + 1.707_614_701 * s_,
-        ];
-        if linear.iter().any(|v| !(0.0..=1.0).contains(v)) {
-            return None;
-        }
-        let [r, g, b] = linear.map(|v| {
-            let v = if v <= 0.003_130_8 { 12.92 * v } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 };
-            (v * 255.0).round() as u8
-        });
-        Some(Color { r, g, b })
     }
 }
 
@@ -878,29 +914,27 @@ mod tests {
     }
 
     #[test]
-    fn oklch_converts_to_srgb() {
-        let rgb = |l, c, h| Oklch { l, c, h }.srgb().map(|c| c.to_string());
-        assert_eq!(rgb(1.0, 0.0, 0.0).as_deref(), Some("#ffffff"));
-        assert_eq!(rgb(0.0, 0.0, 0.0).as_deref(), Some("#000000"));
-        assert_eq!(rgb(0.627_955, 0.257_683, 29.233_885).as_deref(), Some("#ff0000"));
-        assert_eq!(rgb(0.5, 0.4, 150.0), None, "beyond what a screen shows");
+    fn oklab_matches_reference() {
+        let close = |c: Color, want: [f64; 3]| c.oklab().iter().zip(want).all(|(x, y)| (x - y).abs() < 1e-4);
+        assert!(close(Color::hex(0xffffff), [1.0, 0.0, 0.0]));
+        assert!(close(Color::hex(0x000000), [0.0, 0.0, 0.0]));
+        assert!(close(Color::hex(0xff0000), [0.627_955, 0.224_863, 0.125_846]));
     }
 
-    /// Every seed's two sides are clearly apart, the same each time, and the hues spread around.
+    /// The palette has no repeats, every seed's sides are clearly apart, and pairs vary widely.
     #[test]
     fn paper_sides_are_distinct() {
-        let mut hues = [0; 12];
+        for (i, a) in KAMI.iter().enumerate() {
+            assert!(KAMI[i + 1..].iter().all(|b| a.name != b.name && a.color != b.color), "{} repeats", a.name);
+        }
+        let mut pairs = std::collections::HashSet::new();
         for seed in 0..20_000 {
             let (front, back) = Seed(seed).paper();
             assert_eq!(Seed(seed).paper(), (front, back));
-            let lab = |c: Color| [c.r, c.g, c.b].map(|v| v as f64 / 255.0);
-            let [a, b] = [lab(front), lab(back)];
-            let rgb_gap = a.iter().zip(b).map(|(x, y)| (x - y).abs()).fold(0.0, f64::max);
-            assert!(rgb_gap > 0.08, "{seed}: {front} and {back} too close");
-            let mut rng = Xoshiro256PlusPlus::seed_from_u64((seed as u64) << 32 | PAPER_STREAM);
-            hues[(Oklch::paper(&mut rng).h / 30.0) as usize] += 1;
+            assert!(front.color.distance(back.color) >= MIN_SIDE_DISTANCE, "{}: {} and {}", seed, front.name, back.name);
+            pairs.insert((front.name, back.name));
         }
-        assert!(hues.iter().all(|&n| n > 20_000 / 12 / 2), "hues bunch up: {hues:?}");
+        assert!(pairs.len() > 2000, "only {} pairs", pairs.len());
     }
 
     #[test]
