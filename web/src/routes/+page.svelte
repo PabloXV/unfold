@@ -391,10 +391,19 @@
 		font-family: ui-monospace, monospace;
 	}
 	.board {
+		position: relative;
 		width: min(100%, 62svh);
 		aspect-ratio: 1;
 		display: grid;
 		place-items: center;
+	}
+	.board::before {
+		content: '';
+		position: absolute;
+		inset: -45%;
+		z-index: -1;
+		pointer-events: none;
+		background: radial-gradient(closest-side, var(--spot), transparent);
 	}
 	.loading {
 		color: var(--muted);

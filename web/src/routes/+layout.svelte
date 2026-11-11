@@ -7,8 +7,8 @@
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
-	<meta name="theme-color" content="#f4f0e8" media="(prefers-color-scheme: light)" />
-	<meta name="theme-color" content="#1b1a18" media="(prefers-color-scheme: dark)" />
+	<meta name="theme-color" content="#ebe4d6" media="(prefers-color-scheme: light)" />
+	<meta name="theme-color" content="#121110" media="(prefers-color-scheme: dark)" />
 </svelte:head>
 
 {@render children()}
@@ -16,7 +16,8 @@
 <style>
 	:global(:root) {
 		color-scheme: light dark;
-		--bg: #f4f0e8;
+		--bg: #ebe4d6;
+		--spot: #fffdf8;
 		--text: #2a2723;
 		--muted: #7a736a;
 		--line: #d9d2c5;
@@ -34,7 +35,8 @@
 	}
 	@media (prefers-color-scheme: dark) {
 		:global(:root) {
-			--bg: #1b1a18;
+			--bg: #121110;
+			--spot: #3a3733;
 			--text: #ece6db;
 			--muted: #9a9286;
 			--line: #3a3732;
@@ -51,12 +53,15 @@
 			--on-accent: #10201c;
 		}
 	}
+	:global(html) {
+		background: var(--bg);
+	}
 	:global(html),
 	:global(body) {
 		margin: 0;
-		background: var(--bg);
 		color: var(--text);
 		font-family: ui-rounded, 'SF Pro Rounded', system-ui, -apple-system, 'Segoe UI', sans-serif;
 		-webkit-tap-highlight-color: transparent;
+		overflow-x: clip;
 	}
 </style>

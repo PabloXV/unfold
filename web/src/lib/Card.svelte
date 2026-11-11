@@ -101,6 +101,10 @@
 	onpointercancel={onpointerup}
 >
 	<defs>
+		<radialGradient id="card-spot" cx={CX} cy={CY} r={SIZE * 0.62} gradientUnits="userSpaceOnUse">
+			<stop offset="0" stop-color="#fffdf8" />
+			<stop offset="1" stop-color="#ebe4d6" />
+		</radialGradient>
 		<filter id="card-shadow" x="-25%" y="-25%" width="150%" height="150%">
 			<feGaussianBlur in="SourceAlpha" stdDeviation="0.02" />
 			<feOffset dx="0.02" dy="0.04" result="blur" />
@@ -109,7 +113,7 @@
 		</filter>
 	</defs>
 
-	<rect width={SIZE} height={SIZE} fill="#f4f0e8" />
+	<rect width={SIZE} height={SIZE} fill="url(#card-spot)" />
 	<text x="80" y="140" fill={INK} font-family={FONT} font-size="64" font-weight="600">unfold</text>
 	<text x={SIZE - 80} y="140" fill={MUTED} font-family={FONT} font-size="40" text-anchor="end">{result.date}</text>
 
@@ -138,6 +142,7 @@
 		width: 100%;
 		height: auto;
 		border-radius: 1rem;
+		box-shadow: 0 0.25rem 1rem rgb(40 30 20 / 0.18);
 		touch-action: none;
 		user-select: none;
 		-webkit-user-select: none;
