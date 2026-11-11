@@ -152,9 +152,9 @@
 		game.putBack();
 	}
 
-	/** Each crossing where its creases are drawn now, unless a higher flap covers it. */
+	/** While a dot is held, each crossing where its creases are drawn now, unless a higher flap covers it. */
 	const marks = $derived(
-		pos.length !== game.dots
+		pos.length !== game.dots || !game.carrying
 			? []
 			: game.crossingPairs.flatMap(([i, j]) => {
 					const [e, f] = [game.edges[i], game.edges[j]];
@@ -190,7 +190,7 @@
 	</svg>
 	<svg bind:this={svg} class="dots" viewBox="-1.25 -1.25 2.5 2.5" aria-hidden="true">
 		{#each marks as m, i (i)}
-			<circle class="cross" cx={m.x} cy={-m.y} r="0.045" />
+			<circle class="cross" cx={m.x} cy={-m.y} r="0.02" />
 		{/each}
 		{#if pos.length === game.dots && !game.solved}
 			{#each pos as p, v (v)}
@@ -225,7 +225,6 @@
 	.dragging {
 		cursor: grabbing;
 	}
-	.cross,
 	.held,
 	.focus {
 		fill: none;
@@ -233,8 +232,8 @@
 		stroke-dasharray: 3 3;
 	}
 	.cross {
-		stroke: var(--cross);
-		stroke-width: 2.5px;
+		fill: var(--cross);
+		opacity: 0.8;
 	}
 	.held {
 		stroke: var(--carry);
