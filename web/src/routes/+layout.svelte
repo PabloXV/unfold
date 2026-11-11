@@ -9,14 +9,16 @@
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
-	<meta name="theme-color" content="#ebe4d6" />
+	<meta name="color-scheme" content="light dark" />
+	<meta name="theme-color" content="#ebe4d6" media="(prefers-color-scheme: light)" />
+	<meta name="theme-color" content="#3d3833" media="(prefers-color-scheme: dark)" />
 </svelte:head>
 
 {@render children()}
 
 <style>
 	:global(:root) {
-		color-scheme: light;
+		color-scheme: light dark;
 		--bg: #ebe4d6;
 		--spot: #fffdf8;
 		--text: #2a2723;
@@ -33,6 +35,24 @@
 		--accent: #2f7d6d;
 		--carry: #c8862a;
 		--on-accent: #ffffff;
+	}
+	@media (prefers-color-scheme: dark) {
+		:global(:root) {
+			--bg: #3d3833;
+			--spot: #6a645c;
+			--text: #f1ece3;
+			--muted: #bdb5aa;
+			--line: #5a544d;
+			--button: #4a4540;
+			--dot: #f1ece3;
+			--shadow: rgb(0 0 0 / 0.4);
+			--cast: rgb(0 0 0);
+			--cast-step: 0.05;
+			--cross: #ff7a63;
+			--accent: #5fbfa8;
+			--carry: #f0b257;
+			--on-accent: #10201c;
+		}
 	}
 	:global(html) {
 		background: var(--bg);

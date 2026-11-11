@@ -13,7 +13,7 @@
 	const RESTART_TIME = 2000;
 	const NOTICE_TIME = 1500;
 	const CARD_DELAY = 1500;
-	const BACKDROPS = ['#ebe4d6', '#fffdf8'];
+	const BACKDROPS = { light: ['#ebe4d6', '#fffdf8'], dark: ['#3d3833', '#6a645c'] };
 
 	let game = $state.raw<Game | undefined>(undefined);
 	/** Set when playing a day's seed. */
@@ -21,6 +21,7 @@
 	/** Bumped on every solve, so the day's result is worked out again. */
 	let scored = $state(0);
 	let paper = $state.raw<string[]>([]);
+	let dark = $state(false);
 	let cardOpen = $state(false);
 	let editing = $state(false);
 	/** The card's shape as reshaped, and as it first unfolded. */
@@ -60,11 +61,18 @@
 			() => (failed = true)
 		);
 		if (import.meta.env.DEV) Object.defineProperty(window, '__unfold', { get: () => game, configurable: true });
+		const scheme = matchMedia('(prefers-color-scheme: dark)');
+		const onscheme = () => (dark = scheme.matches);
+		onscheme();
+		scheme.addEventListener('change', onscheme);
 		const onhash = () => {
 			if (location.hash.slice(1) !== game?.code) open(location.hash);
 		};
 		addEventListener('hashchange', onhash);
-		return () => removeEventListener('hashchange', onhash);
+		return () => {
+			removeEventListener('hashchange', onhash);
+			scheme.removeEventListener('change', onscheme);
+		};
 	});
 
 	$effect(() => {
@@ -84,7 +92,7 @@
 		if (!front) return;
 		style.setProperty('--paper-front', front);
 		style.setProperty('--paper-back', back);
-		const accent = accentFor(paper, BACKDROPS);
+		const accent = accentFor(paper, dark ? BACKDROPS.dark : BACKDROPS.light);
 		if (accent) {
 			style.setProperty('--accent', accent.accent);
 			style.setProperty('--on-accent', accent.onAccent);
