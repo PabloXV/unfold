@@ -285,7 +285,6 @@
 
 <main>
 	<header>
-		<button class="icon help" onclick={() => (helpOpen = true)} aria-label="How to play" title="How to play"><Icon name="help" /></button>
 		<h1>unfold</h1>
 		{#if game}
 			<p class="meta">
@@ -333,6 +332,7 @@
 					><Icon name="link" /></button
 				>
 			{/if}
+			<button class="icon" onclick={() => (helpOpen = true)} aria-label="How to play" title="How to play"><Icon name="help" /></button>
 			{#if !daily}
 				<button class:primary={game.solved} onclick={() => jump(1)} aria-label="Next level">{game.solved ? 'next level ›' : '›'}</button>
 			{/if}
@@ -410,17 +410,7 @@
 		gap: 0.75rem;
 	}
 	header {
-		position: relative;
-		width: 100%;
 		text-align: center;
-	}
-	.help {
-		position: absolute;
-		top: 0;
-		right: 0;
-		border-color: transparent;
-		background: transparent;
-		color: var(--muted);
 	}
 	button.icon {
 		display: grid;
