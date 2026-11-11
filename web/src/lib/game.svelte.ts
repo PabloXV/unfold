@@ -1,6 +1,6 @@
 import { points, turn } from './geometry';
 import { bestMoves, record } from './scores';
-import { Attempt, type Edge, type Point } from './unfold';
+import { Attempt, type Point } from './unfold';
 
 /** One attempt at a level as reactive state, mirroring the wasm Attempt after every change. */
 export class Game {
@@ -10,7 +10,6 @@ export class Game {
 	readonly dots: number;
 	/** Vertex triples, stacked bottom to top. */
 	readonly flaps: number[][];
-	readonly edges: Edge[];
 	readonly priorBest: number | undefined;
 	readonly par: number;
 	/** Per flap, the sign of its area on the flat sheet; drawn the other way round, it shows its back. */
@@ -20,7 +19,7 @@ export class Game {
 	moves = $state(0);
 	solved = $state(false);
 	carried = $state<number | undefined>(undefined);
-	crossingPairs = $state<number[][]>([]);
+	crossings = $state(0);
 	/** The slot keyboard play is on, which follows the carried dot. */
 	cursor = $state(0);
 	/** When the solve happened, by performance.now(). */
@@ -37,16 +36,11 @@ export class Game {
 		this.code = this.#attempt.code;
 		this.dots = this.#attempt.dots;
 		this.flaps = groups(this.#attempt.flaps(), 3);
-		this.edges = groups(this.#attempt.edges(), 4).map(([a, b, topFlap, shared]) => ({ a, b, topFlap, shared: shared === 1 }));
 		this.priorBest = bestMoves(seed, level);
 		this.par = this.#attempt.par;
 		const sheet = points(this.#attempt.shape());
 		this.faceUp = this.flaps.map((f) => Math.sign(turn(f.map((v) => sheet[v]))));
 		this.#sync();
-	}
-
-	get crossings(): number {
-		return this.crossingPairs.length;
 	}
 
 	get carrying(): boolean {
@@ -135,7 +129,7 @@ export class Game {
 		this.moves = a.moves;
 		this.solved = a.solved;
 		this.carried = a.carried;
-		this.crossingPairs = groups(a.crossingPairs(), 2);
+		this.crossings = a.crossings;
 	}
 }
 

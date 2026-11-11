@@ -15,7 +15,7 @@ export const FONT = '"Courier Prime", "Courier New", monospace';
 
 /** The result as text ending with the link, which is what people tap. */
 export function shareText({ date, moves, par }: Result, url: string): string {
-	return `unfold ${date}\n${moves} moves · par ${par}\n${url}`;
+	return `unfold ${date}\n${moves} moves · fewest ${par}\n${url}`;
 }
 
 let fonts: Promise<string> | undefined;

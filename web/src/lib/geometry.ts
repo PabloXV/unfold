@@ -23,26 +23,6 @@ export function svgPoint(svg: SVGSVGElement, e: PointerEvent): Point {
 	return { x: p.x, y: -p.y };
 }
 
-/** Where two segments meet, if they do. */
-export function meet(a: Point, b: Point, c: Point, d: Point): Point | undefined {
-	const r = { x: b.x - a.x, y: b.y - a.y };
-	const s = { x: d.x - c.x, y: d.y - c.y };
-	const denom = r.x * s.y - r.y * s.x;
-	if (denom === 0) return;
-	const t = ((c.x - a.x) * s.y - (c.y - a.y) * s.x) / denom;
-	const u = ((c.x - a.x) * r.y - (c.y - a.y) * r.x) / denom;
-	if (t < 0 || t > 1 || u < 0 || u > 1) return;
-	return { x: a.x + r.x * t, y: a.y + r.y * t };
-}
-
-/** Strictly inside a triangle, so points on its edges don't count. */
-export function inside([a, b, c]: Point[], p: Point): boolean {
-	const side = (u: Point, v: Point) => (v.x - u.x) * (p.y - u.y) - (v.y - u.y) * (p.x - u.x);
-	const [d1, d2, d3] = [side(a, b), side(b, c), side(c, a)];
-	const eps = 1e-9;
-	return (d1 > eps && d2 > eps && d3 > eps) || (d1 < -eps && d2 < -eps && d3 < -eps);
-}
-
 /** The point nearest `p` within `reach`, by index. */
 export function nearestTo(pts: Point[], p: Point, reach = Infinity): number | undefined {
 	let best: number | undefined;

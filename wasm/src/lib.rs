@@ -41,11 +41,6 @@ impl Attempt {
         self.0.puzzle.flaps.iter().flatten().map(|&v| v as u32).collect()
     }
 
-    /// Four numbers per edge: its two vertices, its top flap, and 1 if two flaps share it.
-    pub fn edges(&self) -> Vec<u32> {
-        self.0.puzzle.edges.iter().flat_map(|e| [e.a as u32, e.b as u32, e.top_flap as u32, e.shared as u32]).collect()
-    }
-
     /// The flat sheet as x, y pairs per vertex, in the puzzle's own units.
     pub fn shape(&self) -> Vec<f64> {
         flatten(&self.0.puzzle.shape)
@@ -80,12 +75,6 @@ impl Attempt {
     #[wasm_bindgen(getter)]
     pub fn crossings(&self) -> u32 {
         self.0.crossings() as u32
-    }
-
-    /// Edge index pairs that cross, two numbers per pair.
-    #[wasm_bindgen(js_name = crossingPairs)]
-    pub fn crossing_pairs(&self) -> Vec<u32> {
-        self.0.puzzle.crossing_pairs(self.0.slot_of()).into_iter().flat_map(|(i, j)| [i as u32, j as u32]).collect()
     }
 
     #[wasm_bindgen(getter)]

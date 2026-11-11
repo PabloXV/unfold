@@ -12,14 +12,6 @@ export function loadCore(): Promise<unknown> {
 
 export type Point = { x: number; y: number };
 
-export type Edge = {
-	a: number;
-	b: number;
-	topFlap: number;
-	/** Shared by two flaps, as opposed to part of the outline. */
-	shared: boolean;
-};
-
 /** Days since the Unix epoch by the local date. */
 export function today(): number {
 	const now = new Date();

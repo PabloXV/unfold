@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Game } from './game.svelte';
-	import { inside, meet, svgPoint } from './geometry';
+	import { svgPoint } from './geometry';
 	import Paper from './Paper.svelte';
 	import type { Point } from './unfold';
 
@@ -152,19 +152,6 @@
 		game.putBack();
 	}
 
-	/** While a dot is held, each crossing where its creases are drawn now, unless a higher flap covers it. */
-	const marks = $derived(
-		pos.length !== game.dots || !game.carrying
-			? []
-			: game.crossingPairs.flatMap(([i, j]) => {
-					const [e, f] = [game.edges[i], game.edges[j]];
-					const at = meet(pos[e.a], pos[e.b], pos[f.a], pos[f.b]);
-					if (!at) return [];
-					const covered = game.flaps.slice(Math.min(e.topFlap, f.topFlap) + 1).some((t) => inside(t.map((v) => pos[v]), at));
-					return covered ? [] : [at];
-				})
-	);
-
 	/** Rings only on the held dot and the keyboard's; touch and mouse show what they grab by moving it. */
 	function ring(v: number): 'held' | 'focus' | undefined {
 		if (game.carried === v) return 'held';
@@ -189,9 +176,6 @@
 		{/if}
 	</svg>
 	<svg bind:this={svg} class="dots" viewBox="-1.25 -1.25 2.5 2.5" aria-hidden="true">
-		{#each marks as m, i (i)}
-			<circle class="cross" cx={m.x} cy={-m.y} r="0.02" />
-		{/each}
 		{#if pos.length === game.dots && !game.solved}
 			{#each pos as p, v (v)}
 				{@const kind = ring(v)}
@@ -230,10 +214,6 @@
 		fill: none;
 		vector-effect: non-scaling-stroke;
 		stroke-dasharray: 3 3;
-	}
-	.cross {
-		fill: var(--cross);
-		opacity: 0.8;
 	}
 	.held {
 		stroke: var(--carry);

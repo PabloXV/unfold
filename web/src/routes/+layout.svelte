@@ -32,7 +32,6 @@
 		--shadow: rgb(60 45 25 / 0.26);
 		--cast: rgb(60 45 25);
 		--cast-step: 0.032;
-		--cross: #d9543f;
 		--accent: #2f7d6d;
 		--carry: #c8862a;
 		--on-accent: #ffffff;
@@ -49,7 +48,6 @@
 			--shadow: rgb(0 0 0 / 0.4);
 			--cast: rgb(0 0 0);
 			--cast-step: 0.05;
-			--cross: #ff7a63;
 			--accent: #5fbfa8;
 			--carry: #f0b257;
 			--on-accent: #10201c;
