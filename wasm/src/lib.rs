@@ -135,6 +135,13 @@ pub fn daily_seed(day: u32) -> u32 {
     uc::Seed::daily(day as u64).0
 }
 
+/// The paper's front and back colors for a seed, as CSS hex colors.
+#[wasm_bindgen(js_name = paperColors)]
+pub fn paper_colors(seed: u32) -> Vec<String> {
+    let (front, back) = uc::Seed(seed & uc::Seed::MASK).paper();
+    vec![front.to_string(), back.to_string()]
+}
+
 /// A code like ABC123/9 as [seed, level], or nothing if it isn't one.
 #[wasm_bindgen(js_name = parseCode)]
 pub fn parse_code(code: &str) -> Option<Vec<u32>> {

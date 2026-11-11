@@ -40,11 +40,101 @@ impl Seed {
     fn rng(self, level: usize) -> Xoshiro256PlusPlus {
         Xoshiro256PlusPlus::seed_from_u64((self.0 as u64) << 32 | level as u64)
     }
+
+    /// The paper's front and back colors for every level of this seed: soft, papery, and
+    /// clearly different from each other.
+    pub fn paper(self) -> (Color, Color) {
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64((self.0 as u64) << 32 | PAPER_STREAM);
+        let front = Oklch::paper(&mut rng);
+        loop {
+            let back = Oklch::paper(&mut rng);
+            if front.distance(back) >= MIN_SIDE_DISTANCE {
+                return (front.srgb().unwrap(), back.srgb().unwrap());
+            }
+        }
+    }
 }
 
 impl fmt::Display for Seed {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:06X}", self.0)
+    }
+}
+
+/// A random stream for colors, apart from every level's.
+const PAPER_STREAM: u64 = 0xFFFF_FFFF;
+/// How far apart in OKLab the two sides must be: about seven times a just-noticeable difference.
+const MIN_SIDE_DISTANCE: f64 = 0.15;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Color {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
+impl fmt::Display for Color {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "#{:02x}{:02x}{:02x}", self.r, self.g, self.b)
+    }
+}
+
+/// A color by perceived lightness, chroma and hue in degrees.
+#[derive(Clone, Copy, Debug)]
+struct Oklch {
+    l: f64,
+    c: f64,
+    h: f64,
+}
+
+impl Oklch {
+    /// Any hue, low chroma, mid to light; reds and oranges kept light so they don't turn brown,
+    /// and yellows light and bright so they don't turn khaki.
+    fn paper(rng: &mut impl Rng) -> Self {
+        loop {
+            let h = rng.random_range(0.0..360.0);
+            let (l, c) = match h {
+                20.0..50.0 => (rng.random_range(0.70..0.86), rng.random_range(0.05..0.10)),
+                50.0..75.0 => (rng.random_range(0.78..0.88), rng.random_range(0.05..0.10)),
+                75.0..120.0 => (rng.random_range(0.82..0.90), rng.random_range(0.07..0.11)),
+                _ => (rng.random_range(0.58..0.84), rng.random_range(0.05..0.10)),
+            };
+            let color = Oklch { l, c, h };
+            if color.srgb().is_some() {
+                return color;
+            }
+        }
+    }
+
+    fn lab(self) -> [f64; 3] {
+        let (sin, cos) = self.h.to_radians().sin_cos();
+        [self.l, self.c * cos, self.c * sin]
+    }
+
+    fn distance(self, o: Oklch) -> f64 {
+        let ([l1, a1, b1], [l2, a2, b2]) = (self.lab(), o.lab());
+        ((l1 - l2).powi(2) + (a1 - a2).powi(2) + (b1 - b2).powi(2)).sqrt()
+    }
+
+    /// In sRGB, if a screen can show it.
+    fn srgb(self) -> Option<Color> {
+        let [l, a, b] = self.lab();
+        let l_ = (l + 0.396_337_777_4 * a + 0.215_803_757_3 * b).powi(3);
+        let m_ = (l - 0.105_561_345_8 * a - 0.063_854_172_8 * b).powi(3);
+        let s_ = (l - 0.089_484_177_5 * a - 1.291_485_548 * b).powi(3);
+        let linear = [
+            4.076_741_662_1 * l_ - 3.307_711_591_3 * m_ + 0.230_969_929_2 * s_,
+            -1.268_438_004_6 * l_ + 2.609_757_401_1 * m_ - 0.341_319_396_5 * s_,
+            -0.004_196_086_3 * l_ - 0.703_418_614_7 * m_ + 1.707_614_701 * s_,
+        ];
+        if linear.iter().any(|v| !(0.0..=1.0).contains(v)) {
+            return None;
+        }
+        let [r, g, b] = linear.map(|v| {
+            let v = if v <= 0.003_130_8 { 12.92 * v } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 };
+            (v * 255.0).round() as u8
+        });
+        Some(Color { r, g, b })
     }
 }
 
@@ -785,6 +875,32 @@ mod tests {
             assert_eq!(p.crossings(&slot_of), 0);
             assert_eq!(p.fewest_moves(&slot_of), 0);
         }
+    }
+
+    #[test]
+    fn oklch_converts_to_srgb() {
+        let rgb = |l, c, h| Oklch { l, c, h }.srgb().map(|c| c.to_string());
+        assert_eq!(rgb(1.0, 0.0, 0.0).as_deref(), Some("#ffffff"));
+        assert_eq!(rgb(0.0, 0.0, 0.0).as_deref(), Some("#000000"));
+        assert_eq!(rgb(0.627_955, 0.257_683, 29.233_885).as_deref(), Some("#ff0000"));
+        assert_eq!(rgb(0.5, 0.4, 150.0), None, "beyond what a screen shows");
+    }
+
+    /// Every seed's two sides are clearly apart, the same each time, and the hues spread around.
+    #[test]
+    fn paper_sides_are_distinct() {
+        let mut hues = [0; 12];
+        for seed in 0..20_000 {
+            let (front, back) = Seed(seed).paper();
+            assert_eq!(Seed(seed).paper(), (front, back));
+            let lab = |c: Color| [c.r, c.g, c.b].map(|v| v as f64 / 255.0);
+            let [a, b] = [lab(front), lab(back)];
+            let rgb_gap = a.iter().zip(b).map(|(x, y)| (x - y).abs()).fold(0.0, f64::max);
+            assert!(rgb_gap > 0.08, "{seed}: {front} and {back} too close");
+            let mut rng = Xoshiro256PlusPlus::seed_from_u64((seed as u64) << 32 | PAPER_STREAM);
+            hues[(Oklch::paper(&mut rng).h / 30.0) as usize] += 1;
+        }
+        assert!(hues.iter().all(|&n| n > 20_000 / 12 / 2), "hues bunch up: {hues:?}");
     }
 
     #[test]

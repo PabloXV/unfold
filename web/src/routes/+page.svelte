@@ -4,10 +4,10 @@
 	import Board from '#lib/Board.svelte';
 	import Card from '#lib/Card.svelte';
 	import { Game } from '#lib/game.svelte.ts';
-	import { Attempt, dailyLevels, dailySeed, formatDay, loadCore, parseCode, today, type Point } from '#lib/unfold.ts';
+	import { Attempt, dailyLevels, dailySeed, formatDay, loadCore, paperColors, parseCode, today, type Point } from '#lib/unfold.ts';
 	import { bestMoves } from '#lib/scores.ts';
 	import { forget, readJson, writeJson } from '#lib/storage.ts';
-	import { shareCard, shareText, squares, toPng, total, type Result } from '#lib/card.ts';
+	import { shareCard, shareLink, shareText, squares, toPng, total, type Result } from '#lib/card.ts';
 
 	const RESTART_TIME = 2000;
 	const NOTICE_TIME = 1500;
@@ -100,6 +100,9 @@
 		shelf.clear();
 		game?.free();
 		game = new Game(seed, level);
+		const [front, back] = paperColors(seed);
+		document.documentElement.style.setProperty('--paper-front', front);
+		document.documentElement.style.setProperty('--paper-back', back);
 		closeCard();
 		corners = undefined;
 		showUrl();
@@ -157,6 +160,13 @@
 		const outcome = await shareCard(await png, shareText(result, here()));
 		if (outcome === 'copied') flash('card copied');
 		else if (outcome === 'downloaded') flash('card saved');
+	}
+
+	async function shareResultLink(): Promise<void> {
+		if (!result) return;
+		const outcome = await shareLink(shareText(result, here()));
+		if (outcome === 'copied') flash('result copied');
+		else if (outcome === 'failed') flash(shareText(result, here()));
 	}
 
 	/** Copies text, or shows it when the clipboard is blocked. */
@@ -333,7 +343,7 @@
 				{#if editing}
 					Drag the corners to reshape it. Pull a flap over to show the paper's other side.
 				{:else}
-					Share it, or reshape it first with the pencil.
+					Reshape it with the pencil. Some apps send only the picture, so share the link too.
 				{/if}
 			</p>
 			<nav>
@@ -345,8 +355,8 @@
 				{#if editing}
 					<button onclick={resetShape}>reset</button>
 				{/if}
-				<button class="primary" onclick={share}>share</button>
-				<button onclick={() => result && copy(shareText(result, here()), 'result copied')}>copy text</button>
+				<button class="primary" onclick={share}>share card</button>
+				<button onclick={shareResultLink}>share link</button>
 			</nav>
 			{#if notice}<p class="hint">{notice}</p>{/if}
 		</div>

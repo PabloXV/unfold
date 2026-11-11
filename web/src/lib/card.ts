@@ -43,6 +43,24 @@ export async function toPng(svg: SVGSVGElement, size = SIZE): Promise<Blob> {
 	}
 }
 
+/** Shares the text alone, which apps that drop text beside an image (like LINE) still post. */
+export async function shareLink(text: string): Promise<'shared' | 'copied' | 'cancelled' | 'failed'> {
+	if (navigator.share) {
+		try {
+			await navigator.share({ text });
+			return 'shared';
+		} catch (e) {
+			if ((e as Error).name === 'AbortError') return 'cancelled';
+		}
+	}
+	try {
+		await navigator.clipboard.writeText(text);
+		return 'copied';
+	} catch {
+		return 'failed';
+	}
+}
+
 /** Shares with the share sheet, else copies to the clipboard, else downloads. */
 export async function shareCard(blob: Blob, text: string): Promise<'shared' | 'copied' | 'downloaded' | 'cancelled'> {
 	const file = new File([blob], 'unfold.png', { type: 'image/png' });
