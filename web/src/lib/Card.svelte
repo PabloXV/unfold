@@ -14,7 +14,6 @@
 		flaps,
 		faceUp,
 		corners,
-		host,
 		hint = false,
 		order,
 		onchange
@@ -26,7 +25,6 @@
 		corners: Point[];
 		/** Flap indices bottom to top. */
 		order: number[];
-		host: string;
 		/** Nudges a corner once, to show the paper can be reshaped. */
 		hint?: boolean;
 		onchange?: (corners: Point[], order: number[]) => void;
@@ -230,7 +228,6 @@
 			<text bind:this={countText} x={line.countX} y="960">{line.count}</text>
 		{/if}
 	</g>
-	<text x={CX} y="1024" fill={LIGHT.muted} font-family={FONT} font-size="30" text-anchor="middle">{host}</text>
 </svg>
 
 <style>

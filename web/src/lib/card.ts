@@ -98,13 +98,14 @@ export async function shareLink(text: string): Promise<'shared' | 'copied' | 'ca
 	return (await copyText(text)) ? 'copied' : 'failed';
 }
 
-/** Shares with the share sheet, else copies to the clipboard, else downloads. */
-export async function shareCard(blob: Blob, text: string): Promise<'shared' | 'copied' | 'downloaded' | 'cancelled'> {
+/** Shares with the share sheet, copying the link for apps that drop the text, else copies to the clipboard, else downloads. */
+export async function shareCard(blob: Blob, text: string, link: string): Promise<'shared' | 'shared with link' | 'copied' | 'downloaded' | 'cancelled'> {
 	const file = new File([blob], 'unfold.png', { type: 'image/png' });
 	if (navigator.canShare?.({ files: [file] })) {
+		const linkCopied = copyText(link);
 		try {
 			await navigator.share({ files: [file], text });
-			return 'shared';
+			return (await linkCopied) ? 'shared with link' : 'shared';
 		} catch (e) {
 			if ((e as Error).name === 'AbortError') return 'cancelled';
 		}

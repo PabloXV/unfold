@@ -15,6 +15,7 @@
 	import { swanUrl } from '#lib/favicon.ts';
 	import { CARD_BAR, DARK, LIGHT } from '#lib/theme.ts';
 	import { LOCALES, locale, setLocale, t, type Locale } from '#lib/i18n/index.svelte.ts';
+	import { toStoryPng } from '#lib/story.ts';
 
 	const RESTART_TIME = 2000;
 	const NOTICE_TIME = 1500;
@@ -134,7 +135,7 @@
 		void [corners, order, locale()];
 		tick().then(() => {
 			const svg = cardView?.element();
-			if (svg) png = toPng(svg);
+			if (svg) png = toPng(svg).then((card) => toStoryPng(card, paper[0], paper[1], location.host, 'mosaic'));
 		});
 	});
 
@@ -235,9 +236,10 @@
 
 	async function share(): Promise<void> {
 		if (!png || !result) return;
-		const outcome = await shareCard(await png, shareText(result, here()));
+		const outcome = await shareCard(await png, shareText(result, here()), here());
 		if (outcome === 'copied') flash(t().cardCopied);
 		else if (outcome === 'downloaded') flash(t().cardSaved);
+		else if (outcome === 'shared with link') flash(t().linkCopied);
 	}
 
 	async function shareResultLink(): Promise<void> {
@@ -433,7 +435,6 @@
 					faceUp={cardShape.faceUp}
 					{corners}
 					{order}
-					host={location.host}
 					hint={!readJson<boolean>(RESHAPED_KEY)}
 					onchange={saveShape}
 				/>
