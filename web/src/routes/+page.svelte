@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, tick, untrack } from 'svelte';
 	import { fly } from 'svelte/transition';
+	import { cubicIn, cubicOut } from 'svelte/easing';
 	import { replaceState } from '$app/navigation';
 	import Board from '#lib/Board.svelte';
 	import Card from '#lib/Card.svelte';
@@ -19,8 +20,10 @@
 	const NOTICE_TIME = 1500;
 	const CARD_DELAY = 1500;
 	/** After a solve, time to watch the paper unfold before the next level slides in. */
-	const ADVANCE_DELAY = 2400;
-	const SLIDE_TIME = 380;
+	const ADVANCE_DELAY = 2000;
+	/** The new level eases in; the old one eases out sooner, so the two barely overlap. */
+	const SLIDE_IN = 380;
+	const SLIDE_OUT = 240;
 	const RESHAPED_KEY = 'unfold:reshaped';
 	const BACKDROPS = { light: [LIGHT.bg, LIGHT.spot], dark: [DARK.bg, DARK.spot] };
 
@@ -345,7 +348,7 @@
 	<div class="board">
 		{#if game}
 			{#key game}
-				<div class="slide" in:fly={{ x: `${slide * 70}%`, opacity: 0, duration: SLIDE_TIME }} out:fly={{ x: `${-slide * 70}%`, opacity: 0, duration: SLIDE_TIME }}>
+				<div class="slide" in:fly={{ x: `${slide * 70}%`, opacity: 0, duration: SLIDE_IN, easing: cubicOut }} out:fly={{ x: `${-slide * 70}%`, opacity: 0, duration: SLIDE_OUT, easing: cubicIn }}>
 					<Board {game} {showCursor} />
 				</div>
 			{/key}
