@@ -10,8 +10,8 @@ use std::ops::{Add, Mul, Sub};
 
 pub const LEVEL_1_DOTS: usize = 4;
 
-/// The levels of a seed that make up a day's puzzle, from 5 dots to 13.
-pub const DAILY_LEVELS: [usize; 5] = [2, 4, 6, 8, 10];
+/// The level of a seed that is the day's puzzle: 13 dots, medium-hard.
+pub const DAILY_LEVEL: usize = 10;
 
 /// Chance that a new flap grows off the newest one: higher makes snakes, lower makes blobs.
 const STRIP_BIAS: f64 = 0.6;

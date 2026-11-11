@@ -4,23 +4,24 @@
 	import Board from '#lib/Board.svelte';
 	import Card from '#lib/Card.svelte';
 	import { Game } from '#lib/game.svelte.ts';
-	import { Attempt, dailyLevels, dailySeed, formatDay, loadCore, paperColors, parseCode, today, type Point } from '#lib/unfold.ts';
+	import { dailyLevel, dailySeed, formatDay, loadCore, paperColors, parseCode, today, type Point } from '#lib/unfold.ts';
 	import { bestMoves } from '#lib/scores.ts';
 	import { forget, readJson, writeJson } from '#lib/storage.ts';
-	import { shareCard, shareLink, shareText, squares, toPng, total, type Result } from '#lib/card.ts';
+	import { shareCard, shareLink, shareText, toPng, type Result } from '#lib/card.ts';
+	import { accentFor } from '#lib/accent.ts';
 
 	const RESTART_TIME = 2000;
 	const NOTICE_TIME = 1500;
 	const CARD_DELAY = 1500;
+	const BACKDROPS = { light: ['#ebe4d6', '#fffdf8'], dark: ['#121110', '#3a3733'] };
 
 	let game = $state.raw<Game | undefined>(undefined);
 	/** Set when playing a day's seed. */
 	let day = $state<number | undefined>(undefined);
-	/** The day's levels in order; unset outside the daily. */
-	let ladder = $state.raw<number[] | undefined>(undefined);
-	let pars = $state.raw<number[]>([]);
 	/** Bumped on every solve, so the day's result is worked out again. */
 	let scored = $state(0);
+	let paper = $state.raw<string[]>([]);
+	let dark = $state(false);
 	let cardOpen = $state(false);
 	let editing = $state(false);
 	/** The card's shape as reshaped, and as it first unfolded. */
@@ -41,14 +42,12 @@
 	let restartTimer: ReturnType<typeof setTimeout> | undefined;
 	let noticeTimer: ReturnType<typeof setTimeout> | undefined;
 
-	const rung = $derived(ladder && game ? ladder.indexOf(game.level) : -1);
-	const onLastRung = $derived(ladder !== undefined && rung === ladder.length - 1);
+	const daily = $derived(game !== undefined && day !== undefined && game.seed === dailySeed(day) && game.level === dailyLevel());
 	const result = $derived.by((): Result | undefined => {
 		void scored;
-		if (!ladder || !game || day === undefined) return;
-		const moves = ladder.map((level) => bestMoves(game!.seed, level));
-		if (moves.some((m) => m === undefined)) return;
-		return { date: formatDay(day), moves: moves as number[], pars };
+		if (!daily || !game || day === undefined) return;
+		const moves = bestMoves(game.seed, game.level);
+		return moves === undefined ? undefined : { date: formatDay(day), moves, par: game.par };
 	});
 
 	const here = () => location.origin + location.pathname;
@@ -62,11 +61,18 @@
 			() => (failed = true)
 		);
 		if (import.meta.env.DEV) Object.defineProperty(window, '__unfold', { get: () => game, configurable: true });
+		const scheme = matchMedia('(prefers-color-scheme: dark)');
+		const onscheme = () => (dark = scheme.matches);
+		onscheme();
+		scheme.addEventListener('change', onscheme);
 		const onhash = () => {
 			if (location.hash.slice(1) !== game?.code) open(location.hash);
 		};
 		addEventListener('hashchange', onhash);
-		return () => removeEventListener('hashchange', onhash);
+		return () => {
+			removeEventListener('hashchange', onhash);
+			scheme.removeEventListener('change', onscheme);
+		};
 	});
 
 	$effect(() => {
@@ -74,54 +80,62 @@
 	});
 
 	$effect(() => {
-		if (!result || !onLastRung || !game?.solved) return;
+		if (!result || !game?.solved) return;
 		untrack(loadCorners);
 		const timer = setTimeout(() => (cardOpen = true), CARD_DELAY);
 		return () => clearTimeout(timer);
 	});
 
-	/** A hash like #ABC123/9 opens that puzzle; anything else, today's daily at its first unsolved level. */
+	$effect(() => {
+		const style = document.documentElement.style;
+		const [front, back] = paper;
+		if (!front) return;
+		style.setProperty('--paper-front', front);
+		style.setProperty('--paper-back', back);
+		const accent = accentFor(paper, dark ? BACKDROPS.dark : BACKDROPS.light);
+		if (accent) {
+			style.setProperty('--accent', accent.accent);
+			style.setProperty('--on-accent', accent.onAccent);
+		} else {
+			style.removeProperty('--accent');
+			style.removeProperty('--on-accent');
+		}
+	});
+
+	$effect(() => {
+		if (!cardOpen || !cardView) return;
+		void [corners, order];
+		tick().then(() => {
+			const svg = cardView?.element();
+			if (svg) png = toPng(svg);
+		});
+	});
+
+	/** A hash like #ABC123/9 opens that puzzle; anything else, today's puzzle. */
 	function open(hash: string): void {
 		const code = parseCode(decodeURIComponent(hash.slice(1)));
 		const now = today();
-		let seed: number, level: number;
-		if (code) {
-			[seed, level] = [code[0], code[1]];
-			day = seed === dailySeed(now) ? now : undefined;
-			ladder = undefined;
-		} else {
-			[seed, day] = [dailySeed(now), now];
-			ladder = Array.from(dailyLevels());
-			pars = ladder.map((l) => {
-				const a = new Attempt(seed, l);
-				const par = a.par;
-				a.free();
-				return par;
-			});
-			level = ladder.find((l) => bestMoves(seed, l) === undefined) ?? ladder[ladder.length - 1];
-		}
+		const [seed, level] = code ?? [dailySeed(now), dailyLevel()];
+		day = seed === dailySeed(now) ? now : undefined;
 		for (const g of shelf.values()) g.free();
 		shelf.clear();
 		game?.free();
 		game = new Game(seed, level);
-		const [front, back] = paperColors(seed);
-		document.documentElement.style.setProperty('--paper-front', front);
-		document.documentElement.style.setProperty('--paper-back', back);
+		paper = paperColors(seed);
 		closeCard();
 		corners = undefined;
 		showUrl();
 	}
 
-	/** The next or previous level, along the ladder in the daily. */
+	/** The next or previous level of a shared puzzle; the daily stands alone. */
 	function neighbour(step: 1 | -1): number | undefined {
-		if (!game) return;
-		if (!ladder) return game.level + step >= 1 ? game.level + step : undefined;
-		return ladder[rung + step];
+		if (!game || daily) return;
+		return game.level + step >= 1 ? game.level + step : undefined;
 	}
 
 	/** The card's shape: as reshaped, else as solved, on whichever side the player solved it. */
 	function loadCorners(): void {
-		if (!game || !onLastRung) return;
+		if (!game || !daily) return;
 		const fits = (p: Point[] | undefined) => p?.length === game!.dots;
 		if (game.solved) writeJson(solvedKey(), round(game.unfolded));
 		const solved = readJson<Point[]>(solvedKey());
@@ -157,15 +171,6 @@
 		forget(orderKey());
 	}
 
-	$effect(() => {
-		if (!cardOpen || !cardView) return;
-		void [corners, order];
-		tick().then(() => {
-			const svg = cardView?.element();
-			if (svg) png = toPng(svg);
-		});
-	});
-
 	async function share(): Promise<void> {
 		if (!png || !result) return;
 		editing = false;
@@ -177,7 +182,7 @@
 	async function shareResultLink(): Promise<void> {
 		if (!result) return;
 		const outcome = await shareLink(shareText(result, here()));
-		if (outcome === 'copied') flash('result copied');
+		if (outcome === 'copied') flash('link copied');
 		else if (outcome === 'failed') flash(shareText(result, here()));
 	}
 
@@ -191,10 +196,10 @@
 		}
 	}
 
-	/** The daily keeps a clean address; any other seed shows its code. */
+	/** The daily keeps a clean address; any other puzzle shows its code. */
 	function showUrl(): void {
 		if (!game) return;
-		replaceState(day === undefined ? `#${game.code}` : location.pathname, {});
+		replaceState(daily ? location.pathname : `#${game.code}`, {});
 	}
 
 	function jump(step: 1 | -1): void {
@@ -238,7 +243,7 @@
 		}
 		if (e.key !== 'r') restartAsked = false;
 		const g = game;
-		const select = () => (g.solved ? jump(1) : g.select());
+		const select = () => (!g.solved ? g.select() : result ? openCard() : jump(1));
 		const keys: Record<string, () => void> = {
 			ArrowLeft: () => g.step(1),
 			h: () => g.step(1),
@@ -272,15 +277,10 @@
 		<h1>unfold</h1>
 		{#if game}
 			<p class="meta">
-				{[
-					day !== undefined && formatDay(day),
-					ladder ? `level ${rung + 1} of ${ladder.length}` : `level ${game.level}`,
-					`par ${game.par}`,
-					game.best !== undefined && `best ${game.best}`
-				]
+				{[daily && day !== undefined ? formatDay(day) : `level ${game.level}`, `par ${game.par}`, game.best !== undefined && `best ${game.best}`]
 					.filter(Boolean)
 					.join(' · ')}
-				{#if !ladder}<span class="code">{game.code}</span>{/if}
+				{#if !daily}<span class="code">{game.code}</span>{/if}
 			</p>
 		{/if}
 	</header>
@@ -313,26 +313,24 @@
 			{/if}
 		</p>
 
-		{#if result && onLastRung}
-			<p class="total">
-				Today: <strong>{total(result.moves)} moves</strong>, par {total(result.pars)}
-				<span class="squares">{squares(result)}</span>
-			</p>
-			<button class="primary" onclick={openCard}>your card</button>
-		{/if}
-
 		<nav>
-			<button onclick={() => jump(-1)} disabled={neighbour(-1) === undefined} aria-label="Previous level">‹</button>
+			{#if !daily}
+				<button onclick={() => jump(-1)} disabled={neighbour(-1) === undefined} aria-label="Previous level">‹</button>
+			{/if}
 			<button onclick={restart}>{game.solved ? 'replay' : 'restart'}</button>
-			<button onclick={() => game && copy(`${here()}#${game.code}`, 'link copied')}>copy link</button>
-			<button class:primary={game.solved && !onLastRung} onclick={() => jump(1)} disabled={neighbour(1) === undefined} aria-label="Next level">
-				{game.solved && !onLastRung ? 'next level ›' : '›'}
-			</button>
+			{#if result}
+				<button class="primary" onclick={openCard}>your card</button>
+			{:else}
+				<button onclick={() => game && copy(`${here()}#${game.code}`, 'link copied')}>copy link</button>
+			{/if}
+			{#if !daily}
+				<button class:primary={game.solved} onclick={() => jump(1)} aria-label="Next level">{game.solved ? 'next level ›' : '›'}</button>
+			{/if}
 		</nav>
 
 		<p class="hint">
 			Drag dots around the circle until no creases cross.<br />
-			<span class="keys">Keys: ← → move · space pick up / set down · esc put back · [ ] levels · r restart · c copy</span>
+			<span class="keys">Keys: ← → move · space pick up / set down · esc put back · r restart · c copy</span>
 		</p>
 	{/if}
 </main>
@@ -341,37 +339,36 @@
 	<div class="overlay" role="presentation" onclick={(e) => e.target === e.currentTarget && closeCard()}>
 		<div class="sheet" role="dialog" aria-modal="true" aria-label="Your card">
 			<button class="close" onclick={closeCard} aria-label="Close">×</button>
-			<Card
-				bind:this={cardView}
-				{result}
-				flaps={game.flaps}
-				faceUp={game.faceUp}
-				{corners}
-				{order}
-				host={location.host}
-				{editing}
-				onchange={saveShape}
-			/>
-			<p class="hint">
-				{#if editing}
-					Drag the corners to reshape it. Pull a flap over to show the paper's other side.
-				{:else}
-					Reshape it with the pencil. Some apps send only the picture, so share the link too.
-				{/if}
-			</p>
-			<nav>
-				<button class="icon" class:primary={editing} onclick={() => (editing = !editing)} aria-pressed={editing} aria-label="Reshape">
-					<svg viewBox="0 0 24 24" aria-hidden="true"
-						><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" /></svg
-					>
-				</button>
-				{#if editing}
-					<button onclick={resetShape}>reset</button>
-				{/if}
-				<button class="primary" onclick={share}>share card</button>
-				<button onclick={shareResultLink}>share link</button>
-			</nav>
-			{#if notice}<p class="hint">{notice}</p>{/if}
+			<div class="frame">
+				<Card
+					bind:this={cardView}
+					{result}
+					flaps={game.flaps}
+					faceUp={game.faceUp}
+					{corners}
+					{order}
+					host={location.host}
+					{editing}
+					onchange={saveShape}
+				/>
+				<div class="bar" role="toolbar" aria-label="Card">
+					<button class:on={editing} onclick={() => (editing = !editing)} aria-pressed={editing} aria-label="Reshape" title="Reshape">
+						<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4Z" /></svg>
+					</button>
+					<button onclick={resetShape} aria-label="Reset shape" title="Reset shape">
+						<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4 4v5h5" /></svg>
+					</button>
+					<button onclick={share} aria-label="Share card" title="Share card">
+						<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7.5 7.5 12 3l4.5 4.5M5 12v7a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-7" /></svg>
+					</button>
+					<button onclick={shareResultLink} aria-label="Share link" title="Share link">
+						<svg viewBox="0 0 24 24" aria-hidden="true"
+							><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" /></svg
+						>
+					</button>
+				</div>
+			</div>
+			<p class="notice" aria-live="polite">{notice}</p>
 		</div>
 	</div>
 {/if}
@@ -391,17 +388,13 @@
 	}
 	h1 {
 		margin: 0;
-		font-size: 2rem;
-		font-weight: 600;
-		letter-spacing: 0.04em;
+		font-size: 2.2rem;
+		font-weight: 700;
 	}
 	.meta {
 		margin: 0.25rem 0 0;
 		color: var(--muted);
 		font-size: 0.9rem;
-	}
-	.code {
-		font-family: ui-monospace, monospace;
 	}
 	.board {
 		position: relative;
@@ -424,20 +417,11 @@
 	.status {
 		margin: 0;
 		min-height: 1.5em;
+		text-align: center;
 		font-variant-numeric: tabular-nums;
 	}
 	.status strong {
 		color: var(--accent);
-	}
-	.total {
-		margin: 0;
-		text-align: center;
-	}
-	.squares {
-		display: block;
-		font-size: 1.4rem;
-		letter-spacing: 0.1em;
-		margin-top: 0.25rem;
 	}
 	.overlay {
 		position: fixed;
@@ -459,8 +443,8 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 0.75rem;
-		padding: 2.75rem 1rem 1rem;
+		gap: 0.5rem;
+		padding: 2.75rem 1rem 0.75rem;
 		border-radius: 1.5rem;
 		background: var(--bg);
 		box-shadow: 0 1rem 3rem rgb(0 0 0 / 0.3);
@@ -481,14 +465,47 @@
 		background: transparent;
 		color: var(--muted);
 	}
-	button.icon {
+	.frame {
+		width: 100%;
+		border-radius: 1rem;
+		overflow: hidden;
+		box-shadow: 0 0.25rem 1rem rgb(40 30 20 / 0.18);
+	}
+	.bar {
+		display: flex;
+		justify-content: space-around;
+		padding: 0.35rem 0.5rem;
+		background: #e4ddd0;
+	}
+	.bar button {
 		display: grid;
 		place-items: center;
-		padding: 0.45rem 0.8rem;
+		min-width: 0;
+		width: 2.75rem;
+		height: 2.75rem;
+		padding: 0;
+		border: none;
+		background: transparent;
+		color: #3a352f;
 	}
-	button.icon svg {
-		width: 1.25rem;
-		height: 1.25rem;
+	.bar button.on {
+		background: #3a352f;
+		color: #f4f0e8;
+	}
+	.bar svg {
+		width: 1.4rem;
+		height: 1.4rem;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 1.8;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+	}
+	.notice {
+		margin: 0;
+		min-height: 1.3em;
+		color: var(--muted);
+		font-size: 0.85rem;
 	}
 	@keyframes fade-in {
 		from {

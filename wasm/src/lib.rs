@@ -148,10 +148,10 @@ pub fn parse_code(code: &str) -> Option<Vec<u32>> {
     uc::parse_code(code.trim()).map(|(seed, level)| vec![seed.0, level as u32])
 }
 
-/// The levels of a seed that make up a day's puzzle.
-#[wasm_bindgen(js_name = dailyLevels)]
-pub fn daily_levels() -> Vec<u32> {
-    uc::DAILY_LEVELS.iter().map(|&l| l as u32).collect()
+/// The level of a seed that is the day's puzzle.
+#[wasm_bindgen(js_name = dailyLevel)]
+pub fn daily_level() -> u32 {
+    uc::DAILY_LEVEL as u32
 }
 
 fn flatten(points: &[uc::Point]) -> Vec<f64> {

@@ -1,31 +1,43 @@
+import regular from '@fontsource/courier-prime/files/courier-prime-latin-400-normal.woff2?url';
+import bold from '@fontsource/courier-prime/files/courier-prime-latin-700-normal.woff2?url';
+
 export type Result = {
-	/** Like "Nov 10". */
+	/** Like "Nov 10, 2026", in the reader's locale. */
 	date: string;
-	/** Moves and par per level of the day, in order. */
-	moves: number[];
-	pars: number[];
+	moves: number;
+	par: number;
 };
 
 /** The card's width and height in pixels. */
 export const SIZE = 1080;
 
-/** Per level, Wordle style: 🟩 at par, 🟨 within two of it, ⬜ beyond. */
-export function squares({ moves, pars }: Result): string {
-	return moves.map((m, i) => (m <= pars[i] ? '🟩' : m <= pars[i] + 2 ? '🟨' : '⬜')).join('');
-}
-
-export const total = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+export const FONT = '"Courier Prime", "Courier New", monospace';
 
 /** The result as text ending with the link, which is what people tap. */
-export function shareText(result: Result, url: string): string {
-	const { moves, pars } = result;
-	return `unfold ${result.date}\n${squares(result)}\n${total(moves)} moves · par ${total(pars)}\n${url}`;
+export function shareText({ date, moves, par }: Result, url: string): string {
+	return `unfold ${date}\n${moves} moves · par ${par}\n${url}`;
+}
+
+let fonts: Promise<string> | undefined;
+
+/** Courier Prime as @font-face rules with the files inlined, since an exported image can't fetch them. */
+function embeddedFonts(): Promise<string> {
+	const inline = async (url: string, weight: number) => {
+		const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer());
+		let bin = '';
+		for (const b of bytes) bin += String.fromCharCode(b);
+		return `@font-face{font-family:"Courier Prime";font-weight:${weight};src:url(data:font/woff2;base64,${btoa(bin)}) format("woff2")}`;
+	};
+	return (fonts ??= Promise.all([inline(regular, 400), inline(bold, 700)]).then((rules) => rules.join('')));
 }
 
 /** The card's svg as a PNG, leaving out anything with the class `no-export`. */
 export async function toPng(svg: SVGSVGElement, size = SIZE): Promise<Blob> {
 	const copy = svg.cloneNode(true) as SVGSVGElement;
 	copy.querySelectorAll('.no-export').forEach((el) => el.remove());
+	const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+	style.textContent = await embeddedFonts();
+	copy.prepend(style);
 	copy.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
 	copy.setAttribute('width', String(size));
 	copy.setAttribute('height', String(size));

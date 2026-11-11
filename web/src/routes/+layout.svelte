@@ -1,4 +1,6 @@
 <script lang="ts">
+	import '@fontsource/courier-prime/400.css';
+	import '@fontsource/courier-prime/700.css';
 	import favicon from '#lib/assets/favicon.svg';
 	import type { LayoutProps } from './$types';
 
@@ -60,7 +62,7 @@
 	:global(body) {
 		margin: 0;
 		color: var(--text);
-		font-family: ui-rounded, 'SF Pro Rounded', system-ui, -apple-system, 'Segoe UI', sans-serif;
+		font-family: 'Courier Prime', 'Courier New', monospace;
 		-webkit-tap-highlight-color: transparent;
 		overflow-x: clip;
 	}

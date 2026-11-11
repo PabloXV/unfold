@@ -1,6 +1,6 @@
 <script lang="ts">
 	import Paper from './Paper.svelte';
-	import { SIZE, squares, total, type Result } from './card';
+	import { FONT, SIZE, type Result } from './card';
 	import { nearestTo, svgPoint, trianglePath } from './geometry';
 	import type { Point } from './unfold';
 
@@ -36,10 +36,6 @@
 	const GRAB = 0.22;
 	const INK = '#2a2723';
 	const MUTED = '#7a736a';
-	const FONT = 'ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", sans-serif';
-	const SQUARE_COLORS: Record<string, string> = { '🟩': '#2f7d6d', '🟨': '#d9a23a', '⬜': '#d9d2c5' };
-	const SQ = 56;
-	const GAP = 16;
 
 	const css = getComputedStyle(document.documentElement);
 	const PAPER = {
@@ -62,7 +58,6 @@
 		stack = order;
 	});
 
-	const marks = $derived([...squares(result)]);
 	const silhouette = $derived(flaps.map((f) => trianglePath(f.map((v) => pos[v]))).join(''));
 
 	function cardPoint(e: PointerEvent): Point {
@@ -104,7 +99,7 @@
 	class:editing
 	viewBox="0 0 {SIZE} {SIZE}"
 	role="img"
-	aria-label="Share card: {result.date}, {total(result.moves)} moves, par {total(result.pars)}"
+	aria-label="Share card: {result.date}, {result.moves} moves, par {result.par}"
 	{onpointerdown}
 	{onpointermove}
 	{onpointerup}
@@ -124,7 +119,7 @@
 	</defs>
 
 	<rect width={SIZE} height={SIZE} fill="url(#card-spot)" />
-	<text x="80" y="140" fill={INK} font-family={FONT} font-size="64" font-weight="600">unfold</text>
+	<text x="80" y="140" fill={INK} font-family={FONT} font-size="64" font-weight="700">unfold</text>
 	<text x={SIZE - 80} y="140" fill={MUTED} font-family={FONT} font-size="40" text-anchor="end">{result.date}</text>
 
 	<g transform="translate({CX} {CY}) scale({SCALE})">
@@ -137,11 +132,8 @@
 		{/if}
 	</g>
 
-	{#each marks as m, i (i)}
-		<rect x={CX - (marks.length * SQ + (marks.length - 1) * GAP) / 2 + i * (SQ + GAP)} y="860" width={SQ} height={SQ} rx="12" fill={SQUARE_COLORS[m]} />
-	{/each}
-	<text x={CX} y="976" fill={INK} font-family={FONT} font-size="44" font-weight="600" text-anchor="middle">
-		{total(result.moves)} moves · par {total(result.pars)}
+	<text x={CX} y="960" fill={INK} font-family={FONT} font-size="48" font-weight="700" text-anchor="middle">
+		{result.moves} moves · par {result.par}
 	</text>
 	<text x={CX} y="1024" fill={MUTED} font-family={FONT} font-size="30" text-anchor="middle">{host}</text>
 </svg>
@@ -151,8 +143,6 @@
 		display: block;
 		width: 100%;
 		height: auto;
-		border-radius: 1rem;
-		box-shadow: 0 0.25rem 1rem rgb(40 30 20 / 0.18);
 		touch-action: none;
 		user-select: none;
 		-webkit-user-select: none;

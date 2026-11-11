@@ -166,6 +166,9 @@ importers:
 
   .:
     devDependencies:
+      '@fontsource/courier-prime':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@sveltejs/adapter-static':
         specifier: ^4.0.0
         version: 4.0.1(@sveltejs/kit@3.1.1(@sveltejs/vite-plugin-svelte@7.3.1(svelte@5.57.3)(vite@8.3.6))(svelte@5.57.3)(typescript@6.0.3)(vite@8.3.6))
@@ -189,6 +192,9 @@ importers:
         version: 8.3.6
 
 packages:
+
+  '@fontsource/courier-prime@5.3.0':
+    resolution: {integrity: sha512-KIi1k4VG1Wv+/CGpb1AUpLkUuOAQA6zmvthqxOZGN0AV8BEgQgbK7qAtquv14zsBJAY1bb5BHIEbWVFLgENh0w==}
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -630,6 +636,8 @@ packages:
     resolution: {integrity: sha512-msJxIvYDYcoNL+PJsu+7qmpDWsYmAxTY+2TNYXXF0hzBzBk0BMecOqDOG/EckUoKCuKwObfbugIl8QpqHDXeFA==}
 
 snapshots:
+
+  '@fontsource/courier-prime@5.3.0': {}
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
