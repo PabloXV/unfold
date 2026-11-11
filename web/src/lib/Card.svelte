@@ -11,6 +11,7 @@
 		corners,
 		host,
 		editing = false,
+		order,
 		onchange
 	}: {
 		result: Result;
@@ -18,10 +19,12 @@
 		faceUp: number[];
 		/** Where each corner is, in board units. */
 		corners: Point[];
+		/** Flap indices bottom to top. */
+		order: number[];
 		host: string;
 		/** Lets the corners be dragged anywhere. */
 		editing?: boolean;
-		onchange?: (corners: Point[]) => void;
+		onchange?: (corners: Point[], order: number[]) => void;
 	} = $props();
 
 	/** The paper's middle and scale on the card, fixed so a dragged corner doesn't rescale it. */
@@ -48,10 +51,15 @@
 
 	let svg = $state<SVGSVGElement | undefined>(undefined);
 	let pos = $state.raw<Point[]>([]);
+	let stack = $state.raw<number[]>([]);
 	let dragging = $state<number | undefined>(undefined);
 
 	$effect.pre(() => {
 		pos = corners;
+	});
+
+	$effect.pre(() => {
+		stack = order;
 	});
 
 	const marks = $derived([...squares(result)]);
@@ -64,8 +72,10 @@
 
 	function onpointerdown(e: PointerEvent): void {
 		if (!editing || e.button > 0) return;
-		dragging = nearestTo(pos, cardPoint(e), GRAB);
-		if (dragging === undefined) return;
+		const v = nearestTo(pos, cardPoint(e), GRAB);
+		if (v === undefined) return;
+		dragging = v;
+		stack = [...stack.filter((k) => !flaps[k].includes(v)), ...stack.filter((k) => flaps[k].includes(v))];
 		e.preventDefault();
 		svg!.setPointerCapture(e.pointerId);
 	}
@@ -80,7 +90,7 @@
 	function onpointerup(): void {
 		if (dragging === undefined) return;
 		dragging = undefined;
-		onchange?.(pos);
+		onchange?.(pos, stack);
 	}
 
 	export function element(): SVGSVGElement | undefined {
@@ -119,7 +129,7 @@
 
 	<g transform="translate({CX} {CY}) scale({SCALE})">
 		<g filter="url(#card-shadow)"><path d={silhouette} fill="#000" /></g>
-		<Paper {flaps} {faceUp} {pos} colors={PAPER} id="card" />
+		<Paper flaps={stack.map((k) => flaps[k])} faceUp={stack.map((k) => faceUp[k])} {pos} colors={PAPER} id="card" />
 		{#if editing}
 			{#each pos as p, v (v)}
 				<circle class="handle no-export" class:held={dragging === v} cx={p.x} cy={-p.y} r="0.06" />

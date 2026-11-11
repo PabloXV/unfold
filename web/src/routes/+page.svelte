@@ -25,6 +25,8 @@
 	let editing = $state(false);
 	/** The card's shape as reshaped, and as it first unfolded. */
 	let corners = $state.raw<Point[] | undefined>(undefined);
+	/** The card's flaps bottom to top; grabbing a corner lifts its flaps to the top. */
+	let order = $state.raw<number[]>([]);
 	let unfoldedCorners: Point[] | undefined;
 	let cardView = $state<Card | undefined>(undefined);
 	/** The card as a PNG, made ahead so sharing opens the share sheet right on the tap. */
@@ -52,6 +54,7 @@
 	const here = () => location.origin + location.pathname;
 	const shapeKey = () => `unfold:shape:${day}`;
 	const solvedKey = () => `unfold:solved:${day}`;
+	const orderKey = () => `unfold:order:${day}`;
 
 	onMount(() => {
 		loadCore().then(
@@ -125,6 +128,8 @@
 		unfoldedCorners = fits(solved) ? solved : game.sheet();
 		const reshaped = readJson<Point[]>(shapeKey());
 		corners = fits(reshaped) ? reshaped : unfoldedCorners;
+		const saved = readJson<number[]>(orderKey());
+		order = saved?.length === game.flaps.length ? saved : game.flaps.map((_, k) => k);
 	}
 
 	function openCard(): void {
@@ -136,21 +141,25 @@
 		cardOpen = editing = false;
 	}
 
-	function saveCorners(next: Point[]): void {
+	function saveShape(next: Point[], stack: number[]): void {
 		corners = next;
+		order = stack;
 		writeJson(shapeKey(), round(next));
+		writeJson(orderKey(), stack);
 	}
 
 	const round = (pts: Point[]) => pts.map((p) => ({ x: +p.x.toFixed(4), y: +p.y.toFixed(4) }));
 
 	function resetShape(): void {
 		if (unfoldedCorners) corners = unfoldedCorners;
+		order = game ? game.flaps.map((_, k) => k) : [];
 		forget(shapeKey());
+		forget(orderKey());
 	}
 
 	$effect(() => {
 		if (!cardOpen || !cardView) return;
-		void corners;
+		void [corners, order];
 		tick().then(() => {
 			const svg = cardView?.element();
 			if (svg) png = toPng(svg);
@@ -338,9 +347,10 @@
 				flaps={game.flaps}
 				faceUp={game.faceUp}
 				{corners}
+				{order}
 				host={location.host}
 				{editing}
-				onchange={saveCorners}
+				onchange={saveShape}
 			/>
 			<p class="hint">
 				{#if editing}
