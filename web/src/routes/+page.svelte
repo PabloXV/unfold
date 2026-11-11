@@ -13,7 +13,7 @@
 	const RESTART_TIME = 2000;
 	const NOTICE_TIME = 1500;
 	const CARD_DELAY = 1500;
-	const BACKDROPS = { light: ['#ebe4d6', '#fffdf8'], dark: ['#121110', '#3a3733'] };
+	const BACKDROPS = ['#ebe4d6', '#fffdf8'];
 
 	let game = $state.raw<Game | undefined>(undefined);
 	/** Set when playing a day's seed. */
@@ -21,7 +21,6 @@
 	/** Bumped on every solve, so the day's result is worked out again. */
 	let scored = $state(0);
 	let paper = $state.raw<string[]>([]);
-	let dark = $state(false);
 	let cardOpen = $state(false);
 	let editing = $state(false);
 	/** The card's shape as reshaped, and as it first unfolded. */
@@ -61,18 +60,11 @@
 			() => (failed = true)
 		);
 		if (import.meta.env.DEV) Object.defineProperty(window, '__unfold', { get: () => game, configurable: true });
-		const scheme = matchMedia('(prefers-color-scheme: dark)');
-		const onscheme = () => (dark = scheme.matches);
-		onscheme();
-		scheme.addEventListener('change', onscheme);
 		const onhash = () => {
 			if (location.hash.slice(1) !== game?.code) open(location.hash);
 		};
 		addEventListener('hashchange', onhash);
-		return () => {
-			removeEventListener('hashchange', onhash);
-			scheme.removeEventListener('change', onscheme);
-		};
+		return () => removeEventListener('hashchange', onhash);
 	});
 
 	$effect(() => {
@@ -92,7 +84,7 @@
 		if (!front) return;
 		style.setProperty('--paper-front', front);
 		style.setProperty('--paper-back', back);
-		const accent = accentFor(paper, dark ? BACKDROPS.dark : BACKDROPS.light);
+		const accent = accentFor(paper, BACKDROPS);
 		if (accent) {
 			style.setProperty('--accent', accent.accent);
 			style.setProperty('--on-accent', accent.onAccent);
@@ -359,7 +351,9 @@
 						<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4 4v5h5" /></svg>
 					</button>
 					<button onclick={share} aria-label="Share card" title="Share card">
-						<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7.5 7.5 12 3l4.5 4.5M5 12v7a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-7" /></svg>
+						<svg viewBox="0 0 24 24" aria-hidden="true"
+							><circle cx="18" cy="5" r="2.5" /><circle cx="6" cy="12" r="2.5" /><circle cx="18" cy="19" r="2.5" /><path d="M8.2 10.8l7.6-4.6M8.2 13.2l7.6 4.6" /></svg
+						>
 					</button>
 					<button onclick={shareResultLink} aria-label="Share link" title="Share link">
 						<svg viewBox="0 0 24 24" aria-hidden="true"
