@@ -10,6 +10,7 @@
 	import { forget, readJson, writeJson } from '#lib/storage.ts';
 	import { shareCard, shareLink, shareText, toPng, type Result } from '#lib/card.ts';
 	import { accentFor } from '#lib/accent.ts';
+	import { swanUrl } from '#lib/favicon.ts';
 
 	const RESTART_TIME = 2000;
 	const NOTICE_TIME = 1500;
@@ -94,6 +95,7 @@
 		if (!front) return;
 		style.setProperty('--paper-front', front);
 		style.setProperty('--paper-back', back);
+		document.querySelector('link[rel="icon"]')?.setAttribute('href', swanUrl(front, back));
 		const accent = accentFor(paper, dark ? BACKDROPS.dark : BACKDROPS.light);
 		if (accent) {
 			style.setProperty('--accent', accent.accent);
