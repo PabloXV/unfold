@@ -27,7 +27,7 @@
 		depth?: boolean;
 		/** Crease width in board units, scaling with the sheet; one screen pixel without. */
 		creaseWidth?: number;
-		/** Makes the creases breathe lighter and darker, to show they can be folded. */
+		/** Lays a glow along each crease, light around a dark core, that strengthens and fades to show it can be folded. */
 		pulse?: boolean;
 		/** Unique per sheet on the page, for its clip paths. */
 		id: string;
@@ -108,44 +108,64 @@
 		{/if}
 		{#each folds[k] as fold (`${fold.a},${fold.b}`)}
 			{@const c = crease(fold)}
-			<g class:pulse>
-				<line
-					x1={c.hx1}
-					y1={c.hy1}
-					x2={c.hx2}
-					y2={c.hy2}
-					stroke="#ffffff"
-					stroke-opacity="0.45"
-					stroke-width={creaseWidth ? creaseWidth * 0.85 : 1}
-					vector-effect={creaseWidth ? undefined : 'non-scaling-stroke'}
-				/>
-				<line
-					x1={c.x1}
-					y1={c.y1}
-					x2={c.x2}
-					y2={c.y2}
-					stroke="#000000"
-					stroke-opacity="0.3"
-					stroke-width={creaseWidth ?? 1.2}
-					vector-effect={creaseWidth ? undefined : 'non-scaling-stroke'}
-				/>
-			</g>
+			{#if pulse}
+				<g class="glow">
+					<line class="halo" x1={c.x1} y1={c.y1} x2={c.x2} y2={c.y2} />
+					<line class="core" x1={c.x1} y1={c.y1} x2={c.x2} y2={c.y2} />
+				</g>
+			{/if}
+			<line
+				x1={c.hx1}
+				y1={c.hy1}
+				x2={c.hx2}
+				y2={c.hy2}
+				stroke="#ffffff"
+				stroke-opacity="0.45"
+				stroke-width={creaseWidth ? creaseWidth * 0.85 : 1}
+				vector-effect={creaseWidth ? undefined : 'non-scaling-stroke'}
+			/>
+			<line
+				x1={c.x1}
+				y1={c.y1}
+				x2={c.x2}
+				y2={c.y2}
+				stroke="#000000"
+				stroke-opacity="0.3"
+				stroke-width={creaseWidth ?? 1.2}
+				vector-effect={creaseWidth ? undefined : 'non-scaling-stroke'}
+			/>
 		{/each}
 	{/each}
 {/if}
 
 <style>
-	.pulse {
-		animation: pulse 1.5s ease-in-out infinite;
+	.glow {
+		opacity: 0.2;
+		animation: glow 1.5s ease-in-out infinite;
 	}
-	@keyframes pulse {
+	.glow line {
+		stroke-linecap: round;
+		vector-effect: non-scaling-stroke;
+	}
+	.halo {
+		stroke: #ffffff;
+		stroke-width: 5px;
+		stroke-opacity: 0.8;
+	}
+	.core {
+		stroke: #000000;
+		stroke-width: 1.5px;
+		stroke-opacity: 0.45;
+	}
+	@keyframes glow {
 		50% {
-			opacity: 0.25;
+			opacity: 1;
 		}
 	}
 	@media (prefers-reduced-motion: reduce) {
-		.pulse {
+		.glow {
 			animation: none;
+			opacity: 0.5;
 		}
 	}
 </style>

@@ -41,7 +41,7 @@
 	const toScreen = (p: Point) => ({ x: (p.x - view.x) * view.s, y: (p.y - view.y) * view.s });
 	const toWorld = (p: Point) => ({ x: p.x / view.s + view.x, y: p.y / view.s + view.y });
 	const shown = $derived(sheet.pos.map(toScreen));
-	const hidden = $derived(!sheet.solved && !turning && !folding ? buried(sheet.stack, sheet.flaps, sheet.pos) : []);
+	const hidden = $derived(!sheet.solved && !sheet.creases && !turning && !folding ? buried(sheet.stack, sheet.flaps, sheet.pos) : []);
 
 	onMount(() => {
 		let last = 0;
