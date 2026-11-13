@@ -179,31 +179,72 @@ export function play(ms: number, c: Crease, moving: number[], pos: Point[], flap
 	return finish;
 }
 
-/** Unfolds a player could make too soon: folds free to undo now, but landing on another free fold and burying it. */
-function pitfalls(folded: Crease[], all: Crease[], pos: Point[], flaps: number[][], stack: number[]): number {
-	const free = folded.filter((c) => swinger(c, all, pos, flaps, stack));
-	return free.filter((x) => {
-		const moving = swinger(x, all, pos, flaps, stack)!;
-		const [p, s] = [fold(pos, flaps, x, moving, -1), restack(stack, moving, -1)];
-		return free.some((y) => y !== x && !swinger(y, all, p, flaps, s));
-	}).length;
+/** Whether a crease can fold from one side of the paper or the other, turning it over being free. */
+const either = (c: Crease, all: Crease[], pos: Point[], flaps: number[][], stack: number[]) =>
+	!!swinger(c, all, pos, flaps, stack) || !!swinger(c, all, pos, flaps, [...stack].reverse());
+
+/** How much searching judging one scramble may take, so the biggest levels stay quick. */
+const LOOK = 4000;
+
+/** Whether the folds can all be unfolded, one tap each, turning the paper over as needed; unsure past the search budget. */
+function clears(folded: Crease[], all: Crease[], pos: Point[], flaps: number[][], stack: number[], seen: Map<string, boolean>, budget: { left: number }): boolean {
+	if (!folded.length) return true;
+	const key = `${folded.map((c) => all.indexOf(c)).join()}|${stack.join()}`;
+	const known = seen.get(key);
+	if (known !== undefined) return known;
+	if (--budget.left < 0) return true;
+	const ok = [stack, [...stack].reverse()].some((s) =>
+		folded.some((c) => {
+			const moving = swinger(c, all, pos, flaps, s);
+			return moving && clears(folded.filter((x) => x !== c), all, fold(pos, flaps, c, moving, -1), flaps, restack(s, moving, -1), seen, budget);
+		})
+	);
+	seen.set(key, ok);
+	return ok;
 }
+
+/** Whether some fold could be undone too soon, from either side, leaving the rest unable to unfold without folding back. */
+function trapped(folded: Crease[], all: Crease[], pos: Point[], flaps: number[][], stack: number[]): boolean {
+	const seen = new Map<string, boolean>();
+	const budget = { left: LOOK };
+	return [stack, [...stack].reverse()].some((s) =>
+		folded.some((c) => {
+			const moving = swinger(c, all, pos, flaps, s);
+			return moving && !clears(folded.filter((x) => x !== c), all, fold(pos, flaps, c, moving, -1), flaps, restack(s, moving, -1), seen, budget);
+		})
+	);
+}
+
+/** Earlier folds a player could undo too soon: free to unfold now, from either side, but pinning crease `c` from both if they are. */
+function traps(c: Crease, earlier: Crease[], all: Crease[], pos: Point[], flaps: number[][], stack: number[]): number {
+	return earlier.filter((x) =>
+		[stack, [...stack].reverse()].some((s) => {
+			const moving = swinger(x, all, pos, flaps, s);
+			return moving && !either(c, all, fold(pos, flaps, x, moving, -1), flaps, restack(s, moving, -1));
+		})
+	).length;
+}
+
+/** The paper turned over: mirrored, its stack upside down. */
+const turned = (pos: Point[], stack: number[]) => [pos.map((p) => ({ x: -p.x, y: p.y })), [...stack].reverse()] as const;
 
 /** The most flaps a scrambling fold swings, as an origami folder folds flaps rather than halves of the sheet. */
 const FLAP = 3;
 /** The most earlier folds one scrambling fold may cover, so that most levels unfold in more than one order. */
 const BURY = 1;
-/** How many scrambles a level tries, keeping the one with the most pitfalls. */
-const TRIES = 6;
+/** How many scrambles a level tries, keeping the one with the most traps. */
+const TRIES = 16;
 
-/** The flat sheet folded over up to `k` different creases in turn, each swinging a small side nothing lies on, covering
- * few earlier folds, and the side a tap swings back; so tapping them in reverse unfolds it. */
+/** The flat sheet folded over up to `k` different creases in turn, turned over at random between, so folds come from both
+ * sides; each swings a small side nothing lies on, covers few earlier folds, and is what a tap swings back. */
 function scramble(rnd: () => number, sheet: Point[], flaps: number[][], all: Crease[], k: number) {
 	let pos = sheet;
 	let stack = flaps.map((_, i) => i);
 	const used: Crease[] = [];
-	const unburied = (p: Point[], s: number[]) => used.filter((c) => swinger(c, all, p, flaps, s)).length;
+	let built = 0;
+	const unburied = (p: Point[], s: number[]) => used.filter((c) => either(c, all, p, flaps, s)).length;
 	for (let i = k; i > 0; i--) {
+		if (rnd() < 0.5) [pos, stack] = turned(pos, stack);
 		const before = unburied(pos, stack);
 		const options = all.flatMap((c) =>
 			used.includes(c)
@@ -212,27 +253,29 @@ function scramble(rnd: () => number, sheet: Point[], flaps: number[][], all: Cre
 						if (inWay(c, all, pos, flaps, stack, side).length) return [];
 						const [p, s] = [fold(pos, flaps, c, side, -1), restack(stack, side, -1)];
 						if (swinger(c, all, p, flaps, s) !== side) return [];
-						return [{ c, p, s, big: side.length > FLAP, buries: before - unburied(p, s) }];
+						return [{ c, p, s, big: side.length > FLAP, buries: before - unburied(p, s), traps: traps(c, used, all, p, flaps, s) }];
 					}),
 		);
 		if (!options.length) break;
 		const best = options.filter((o) => !o.big || options.every((q) => q.big));
+		const most = Math.max(...best.map((o) => o.traps));
 		const fewest = Math.max(BURY, Math.min(...best.map((o) => o.buries)));
-		const pool = best.filter((o) => o.buries <= fewest);
+		const pool = most > 0 ? best.filter((o) => o.traps === most) : best.filter((o) => o.buries <= fewest);
 		const pick = pool[Math.floor(rnd() * pool.length)];
 		[pos, stack] = [pick.p, pick.s];
 		used.push(pick.c);
+		if (pick.traps && trapped(used, all, pos, flaps, stack)) built++;
 	}
-	return { pos, stack, par: used.length, pitfalls: pitfalls(used, all, pos, flaps, stack) };
+	return { pos, stack, par: used.length, traps: built };
 }
 
-/** The level's start: of a few scrambles with the most folds, the one with the most pitfalls, so a careless unfold costs moves.
- * Tapping a scramble's folds in reverse unfolds it, and each needs a tap, so its fold count is the fewest moves. */
+/** The level's start: of a few scrambles with the most folds, the one with the most traps, so a careless unfold costs moves.
+ * Tapping a scramble's folds in reverse, turning over to match, unfolds it, so its fold count is the fewest moves. */
 export function crumple(sheet: Point[], flaps: number[][], all: Crease[], seed: number, level: number) {
 	const rnd = random(seed * 977 + level * 131);
 	const k = Math.min(all.length, 1 + Math.floor(level / 2));
 	const tries = Array.from({ length: TRIES }, () => scramble(rnd, sheet, flaps, all, k));
-	return tries.reduce((a, b) => (b.par > a.par || (b.par === a.par && b.pitfalls > a.pitfalls) ? b : a));
+	return tries.reduce((a, b) => (b.par > a.par || (b.par === a.par && b.traps > a.traps) ? b : a));
 }
 
 /** How different a flap's sides must be, as a share of its longest; its smallest angle, in radians; and how far
