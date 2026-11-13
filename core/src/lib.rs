@@ -41,13 +41,14 @@ impl Seed {
         Xoshiro256PlusPlus::seed_from_u64((self.0 as u64) << 32 | level as u64)
     }
 
-    /// The paper's front and back for every level of this seed: two origami colors, clearly apart.
+    /// The paper's front and back for every level of this seed: two origami colors, clearly apart,
+    /// at least one of them vivid, and not two shades of one hue.
     pub fn paper(self) -> (Kami, Kami) {
         let mut rng = Xoshiro256PlusPlus::seed_from_u64((self.0 as u64) << 32 | PAPER_STREAM);
-        let front = KAMI[rng.random_range(0..KAMI.len())];
         loop {
+            let front = KAMI[rng.random_range(0..KAMI.len())];
             let back = KAMI[rng.random_range(0..KAMI.len())];
-            if front.color.distance(back.color) >= MIN_SIDE_DISTANCE {
+            if paired(front.color, back.color) {
                 return (front, back);
             }
         }
@@ -64,6 +65,20 @@ impl fmt::Display for Seed {
 const PAPER_STREAM: u64 = 0xFFFF_FFFF;
 /// How far apart in OKLab the two sides must be: about ten times a just-noticeable difference.
 const MIN_SIDE_DISTANCE: f64 = 0.2;
+/// How colorful one side must be, in OKLCH chroma, so muted browns and grays never fill a day alone.
+const VIVID: f64 = 0.1;
+/// Below this chroma a color is a neutral, with no hue to clash.
+const NEUTRAL: f64 = 0.04;
+/// How far apart two colored sides' hues must be, in degrees.
+const MIN_HUE_APART: f64 = 60.0;
+
+/// Whether two colors make a good sheet together.
+fn paired(a: Color, b: Color) -> bool {
+    let apart = (a.hue() - b.hue()).abs();
+    a.distance(b) >= MIN_SIDE_DISTANCE
+        && a.chroma().max(b.chroma()) >= VIVID
+        && (a.chroma().min(b.chroma()) < NEUTRAL || apart.min(360.0 - apart) >= MIN_HUE_APART)
+}
 
 /// A sheet of origami paper by color.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -160,6 +175,16 @@ impl Color {
             1.977_998_495_1 * l - 2.428_592_205 * m + 0.450_593_709_9 * s,
             0.025_904_037_1 * l + 0.782_771_766_2 * m - 0.808_675_766 * s,
         ]
+    }
+
+    fn chroma(self) -> f64 {
+        let [_, a, b] = self.oklab();
+        a.hypot(b)
+    }
+
+    fn hue(self) -> f64 {
+        let [_, a, b] = self.oklab();
+        b.atan2(a).to_degrees().rem_euclid(360.0)
     }
 
     fn distance(self, o: Color) -> f64 {
@@ -921,7 +946,7 @@ mod tests {
         assert!(close(Color::hex(0xff0000), [0.627_955, 0.224_863, 0.125_846]));
     }
 
-    /// The palette has no repeats, every seed's sides are clearly apart, and pairs vary widely.
+    /// The palette has no repeats, every seed's sides make a good pair, and pairs vary widely.
     #[test]
     fn paper_sides_are_distinct() {
         for (i, a) in KAMI.iter().enumerate() {
@@ -931,10 +956,10 @@ mod tests {
         for seed in 0..20_000 {
             let (front, back) = Seed(seed).paper();
             assert_eq!(Seed(seed).paper(), (front, back));
-            assert!(front.color.distance(back.color) >= MIN_SIDE_DISTANCE, "{}: {} and {}", seed, front.name, back.name);
+            assert!(paired(front.color, back.color), "{}: {} and {}", seed, front.name, back.name);
             pairs.insert((front.name, back.name));
         }
-        assert!(pairs.len() > 2000, "only {} pairs", pairs.len());
+        assert!(pairs.len() > 1500, "only {} pairs", pairs.len());
     }
 
     #[test]
