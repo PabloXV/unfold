@@ -4,6 +4,7 @@
 
 <script lang="ts">
 	import { trianglePath, turn } from './geometry';
+	import { overlap } from './stacking';
 	import type { Point } from './unfold';
 
 	let {
@@ -13,6 +14,7 @@
 		colors,
 		depth = false,
 		creaseWidth,
+		pulse = false,
 		id
 	}: {
 		/** Vertex triples, bottom to top. */
@@ -21,10 +23,12 @@
 		pos: Point[];
 		/** Plain values or var()s; an exported image needs plain values. */
 		colors: PaperColors;
-		/** Deepens the lower flaps a little, as stacked sheets look. */
+		/** Deepens flaps a little per flap over them, as stacked sheets look. */
 		depth?: boolean;
 		/** Crease width in board units, scaling with the sheet; one screen pixel without. */
 		creaseWidth?: number;
+		/** Makes the creases breathe lighter and darker, to show they can be folded. */
+		pulse?: boolean;
 		/** Unique per sheet on the page, for its clip paths. */
 		id: string;
 	} = $props();
@@ -34,12 +38,18 @@
 
 	const flapPaths = $derived(pos.length ? flaps.map((f) => trianglePath(f.map((v) => pos[v]))) : []);
 
-	/** Per flap, every flap above it as one path: the shape of the shadow cast onto it. */
-	const above = $derived.by(() => {
-		const out: string[] = new Array(flapPaths.length).fill('');
-		for (let k = flapPaths.length - 2; k >= 0; k--) out[k] = out[k + 1] + flapPaths[k + 1];
-		return out;
+	/** Per flap, the flaps above that lie over it; a flap beside it, even sharing an edge, lies level with it. */
+	const covers = $derived.by(() => {
+		const tris = flaps.map((f) => f.map((v) => pos[v]));
+		return tris.map((t, k) => tris.flatMap((u, j) => (j > k && overlap(t, u) ? [j] : [])));
 	});
+
+	/** Per flap, the flaps over it as one path: the shape of the shadow cast onto it. */
+	const above = $derived(pos.length ? covers.map((js) => js.map((j) => flapPaths[j]).join('')) : []);
+
+	/** How much darker each flap over a flap makes it, and the most, in percent. */
+	const DEEPER = 4;
+	const DEEPEST = 14;
 
 	/** How far a crease's highlight sits from its line, toward the light at the top left. */
 	const HIGHLIGHT = 0.007;
@@ -76,8 +86,7 @@
 	function fill(k: number): string {
 		const color = Math.sign(turn(flaps[k].map((v) => pos[v]))) === faceUp[k] ? colors.front : colors.back;
 		if (!depth) return color;
-		const deep = flaps.length > 1 ? 1 - k / (flaps.length - 1) : 0;
-		return `color-mix(in oklab, ${color} ${100 - Math.round(deep * 14)}%, black)`;
+		return `color-mix(in oklab, ${color} ${100 - Math.min(DEEPEST, DEEPER * covers[k].length)}%, black)`;
 	}
 </script>
 
@@ -99,26 +108,44 @@
 		{/if}
 		{#each folds[k] as fold (`${fold.a},${fold.b}`)}
 			{@const c = crease(fold)}
-			<line
-				x1={c.hx1}
-				y1={c.hy1}
-				x2={c.hx2}
-				y2={c.hy2}
-				stroke="#ffffff"
-				stroke-opacity="0.45"
-				stroke-width={creaseWidth ? creaseWidth * 0.85 : 1}
-				vector-effect={creaseWidth ? undefined : 'non-scaling-stroke'}
-			/>
-			<line
-				x1={c.x1}
-				y1={c.y1}
-				x2={c.x2}
-				y2={c.y2}
-				stroke="#000000"
-				stroke-opacity="0.3"
-				stroke-width={creaseWidth ?? 1.2}
-				vector-effect={creaseWidth ? undefined : 'non-scaling-stroke'}
-			/>
+			<g class:pulse>
+				<line
+					x1={c.hx1}
+					y1={c.hy1}
+					x2={c.hx2}
+					y2={c.hy2}
+					stroke="#ffffff"
+					stroke-opacity="0.45"
+					stroke-width={creaseWidth ? creaseWidth * 0.85 : 1}
+					vector-effect={creaseWidth ? undefined : 'non-scaling-stroke'}
+				/>
+				<line
+					x1={c.x1}
+					y1={c.y1}
+					x2={c.x2}
+					y2={c.y2}
+					stroke="#000000"
+					stroke-opacity="0.3"
+					stroke-width={creaseWidth ?? 1.2}
+					vector-effect={creaseWidth ? undefined : 'non-scaling-stroke'}
+				/>
+			</g>
 		{/each}
 	{/each}
 {/if}
+
+<style>
+	.pulse {
+		animation: pulse 1.5s ease-in-out infinite;
+	}
+	@keyframes pulse {
+		50% {
+			opacity: 0.25;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.pulse {
+			animation: none;
+		}
+	}
+</style>

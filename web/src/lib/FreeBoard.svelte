@@ -239,7 +239,7 @@
 		onpointercancel={onpointerup}
 	>
 		<g class="paper">
-			<Paper flaps={sheet.stack.map((k) => sheet.flaps[k])} faceUp={sheet.stack.map((k) => sheet.faceUp[k])} pos={shown} colors={PAPER} depth={!sheet.solved} id="board" />
+			<Paper flaps={sheet.stack.map((k) => sheet.flaps[k])} faceUp={sheet.stack.map((k) => sheet.faceUp[k])} pos={shown} colors={PAPER} depth={!sheet.solved} pulse={!!sheet.creases && !sheet.solved} id="board" />
 		</g>
 		{#each hidden as v (v)}
 			<circle class="hidden" cx={shown[v].x} cy={-shown[v].y} r="0.045" />
