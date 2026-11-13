@@ -47,7 +47,7 @@
 	const shown = $derived(sheet.pos.map(toScreen));
 	const loose = $derived(
 		sheet.creases && !sheet.solved && !turning && !folding
-			? new Set(sheet.creases.filter((c) => swinger(c, sheet.pos, sheet.flaps, sheet.stack)).map((c) => (c.a < c.b ? `${c.a},${c.b}` : `${c.b},${c.a}`)))
+			? new Set(sheet.creases.filter((c) => swinger(c, sheet.creases!, sheet.pos, sheet.flaps, sheet.stack)).map((c) => (c.a < c.b ? `${c.a},${c.b}` : `${c.b},${c.a}`)))
 			: sheet.creases && new Set<string>(),
 	);
 	const hidden = $derived(!sheet.solved && !sheet.creases && !turning && !folding ? buried(sheet.stack, sheet.flaps, sheet.pos) : []);
@@ -153,7 +153,7 @@
 
 	/** Folds or unfolds a crease, its smaller side swinging up and over the rest, or its larger if paper lies on the smaller; with paper on both, nothing. */
 	function swing(c: Crease): void {
-		const moving = swinger(c, sheet.pos, sheet.flaps, sheet.stack);
+		const moving = swinger(c, sheet.creases!, sheet.pos, sheet.flaps, sheet.stack);
 		if (!moving) return;
 		const [base, under] = [sheet.pos, sheet.stack];
 		sheet.moves++;
@@ -232,8 +232,8 @@
 		turning = undefined;
 		const c = sheet.creases && tapped(sheet.pos, sheet.flaps, sheet.stack, sheet.creases, toWorld(at), TAP / view.s);
 		if (!c) return;
-		if (swinger(c, sheet.pos, sheet.flaps, sheet.stack)) return swing(c);
-		light(blocking(c, sheet.pos, sheet.flaps, sheet.stack));
+		if (swinger(c, sheet.creases!, sheet.pos, sheet.flaps, sheet.stack)) return swing(c);
+		light(blocking(c, sheet.creases!, sheet.pos, sheet.flaps, sheet.stack));
 	}
 
 	/** Lights up the flaps keeping a tapped crease from folding, afresh on every tap. */

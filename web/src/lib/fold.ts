@@ -1,9 +1,10 @@
 import { fit, flat, inside } from './free';
+import { turn } from './geometry';
 import { overlap } from './stacking';
 import type { Point } from './unfold';
 
-/** A crease shared by two flaps, and the flaps on each side of it, which it cuts the paper into. */
-export type Crease = { a: number; b: number; sides: [number[], number[]] };
+/** A crease: its corners, the two flaps hinged on it, and the flaps on each side of it, which it cuts the paper into. */
+export type Crease = { a: number; b: number; hinge: [number, number]; sides: [number[], number[]] };
 
 /** A seeded generator, so a seed and level always fold the same way. */
 function random(seed: number): () => number {
@@ -39,7 +40,7 @@ export function creases(flaps: number[][]): Crease[] {
 	for (let i = 0; i < flaps.length; i++) {
 		for (let j = i + 1; j < flaps.length; j++) {
 			const ab = shared(flaps[i], flaps[j]);
-			if (ab.length === 2) out.push({ a: ab[0], b: ab[1], sides: [reach(flaps, i, j), reach(flaps, j, i)] });
+			if (ab.length === 2) out.push({ a: ab[0], b: ab[1], hinge: [i, j], sides: [reach(flaps, i, j), reach(flaps, j, i)] });
 		}
 	}
 	return out;
@@ -87,24 +88,55 @@ export function tapped(pos: Point[], flaps: number[][], stack: number[], all: Cr
 }
 
 /** The flaps off one side of a crease lying over any of its flaps, which keep it from swinging. */
-export function blockers(pos: Point[], flaps: number[][], stack: number[], moving: number[]): number[] {
+function blockers(pos: Point[], flaps: number[][], stack: number[], moving: number[]): number[] {
 	const level = new Map(stack.map((k, i) => [k, i]));
 	const tri = (k: number) => flaps[k].map((w) => pos[w]);
 	return stack.filter((k) => !moving.includes(k) && moving.some((m) => level.get(k)! > level.get(m)! && overlap(tri(m), tri(k))));
 }
 
-const free = (pos: Point[], flaps: number[][], stack: number[], moving: number[]) => blockers(pos, flaps, stack, moving).length === 0;
+/** Whether a segment passes through a triangle's inside, not just along or past it. */
+function crosses(t: Point[], a: Point, b: Point): boolean {
+	const sign = Math.sign(turn(t));
+	let [lo, hi] = [0, 1];
+	for (let i = 0; i < 3; i++) {
+		const [p, q] = [t[i], t[(i + 1) % 3]];
+		const n = { x: -(q.y - p.y) * sign, y: (q.x - p.x) * sign };
+		const [at, by] = [n.x * (a.x - p.x) + n.y * (a.y - p.y), n.x * (b.x - a.x) + n.y * (b.y - a.y)];
+		if (Math.abs(by) < 1e-12) {
+			if (at <= 1e-9) return false;
+		} else if (by > 0) lo = Math.max(lo, (1e-9 - at) / by);
+		else hi = Math.min(hi, (1e-9 - at) / by);
+	}
+	return hi - lo > 1e-6;
+}
 
-/** What keeps a crease from folding: the fewer of the flaps lying on either side. */
-export function blocking(c: Crease, pos: Point[], flaps: number[][], stack: number[]): number[] {
-	const [x, y] = c.sides.map((side) => blockers(pos, flaps, stack, side));
+/** Flaps cutting through the paper: lying across a crease, between the two flaps hinged on it, as no paper can. */
+function through(pos: Point[], flaps: number[][], stack: number[], all: Crease[]): number[] {
+	const level = new Map(stack.map((k, i) => [k, i]));
+	const out = new Set<number>();
+	for (const { a, b, hinge } of all) {
+		const [lo, hi] = hinge.map((k) => level.get(k)!).sort((x, y) => x - y);
+		for (const k of stack.slice(lo + 1, hi)) if (crosses(flaps[k].map((w) => pos[w]), pos[a], pos[b])) out.add(k);
+	}
+	return [...out];
+}
+
+/** What keeps one side of a crease from swinging: flaps lying on it, or else flaps the fold would leave cutting through. */
+function inWay(c: Crease, all: Crease[], pos: Point[], flaps: number[][], stack: number[], moving: number[]): number[] {
+	const on = blockers(pos, flaps, stack, moving);
+	return on.length ? on : through(fold(pos, flaps, c, moving, -1), flaps, restack(stack, moving, -1), all);
+}
+
+/** What keeps a crease from folding: the fewer of the flaps in the way of either side. */
+export function blocking(c: Crease, all: Crease[], pos: Point[], flaps: number[][], stack: number[]): number[] {
+	const [x, y] = c.sides.map((side) => inWay(c, all, pos, flaps, stack, side));
 	return x.length <= y.length ? x : y;
 }
 
-/** The side of a crease that swings when tapped: the smaller if nothing lies on it, else the larger, else none. */
-export function swinger(c: Crease, pos: Point[], flaps: number[][], stack: number[]): number[] | undefined {
+/** The side of a crease that swings when tapped: the smaller if nothing is in its way, else the larger, else none. */
+export function swinger(c: Crease, all: Crease[], pos: Point[], flaps: number[][], stack: number[]): number[] | undefined {
 	const [small, large] = c.sides[0].length <= c.sides[1].length ? c.sides : [c.sides[1], c.sides[0]];
-	return [small, large].find((side) => free(pos, flaps, stack, side));
+	return [small, large].find((side) => inWay(c, all, pos, flaps, stack, side).length === 0);
 }
 
 /** The most flaps a scrambling fold swings, as an origami folder folds flaps rather than halves of the sheet. */
@@ -119,16 +151,16 @@ export function crumple(sheet: Point[], flaps: number[][], all: Crease[], seed: 
 	let pos = sheet;
 	let stack = flaps.map((_, i) => i);
 	const used: Crease[] = [];
-	const loose = (p: Point[], s: number[]) => used.filter((c) => swinger(c, p, flaps, s)).length;
+	const loose = (p: Point[], s: number[]) => used.filter((c) => swinger(c, all, p, flaps, s)).length;
 	for (let i = Math.min(all.length, 1 + Math.floor(level / 2)); i > 0; i--) {
 		const before = loose(pos, stack);
 		const options = all.flatMap((c) =>
 			used.includes(c)
 				? []
 				: c.sides.flatMap((side) => {
-						if (!free(pos, flaps, stack, side)) return [];
+						if (inWay(c, all, pos, flaps, stack, side).length) return [];
 						const [p, s] = [fold(pos, flaps, c, side, -1), restack(stack, side, -1)];
-						if (swinger(c, p, flaps, s) !== side) return [];
+						if (swinger(c, all, p, flaps, s) !== side) return [];
 						return [{ c, p, s, big: side.length > FLAP, buries: before - loose(p, s) }];
 					}),
 		);
