@@ -1,7 +1,7 @@
 import { readJson, writeJson } from './storage';
 
 /** Moves over the fewest possible that a whole run can spend. */
-export const BUDGET = 10;
+export const BUDGET = 3;
 
 /** A day's run: moves and fewest possible per solved level, and moves so far on the next one. */
 export type Run = { solved: [moves: number, par: number][]; pending: number };
