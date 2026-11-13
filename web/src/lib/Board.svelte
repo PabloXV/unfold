@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { type Crease, blocking, loose, play, swinger, tapped } from './fold';
-	import { squeeze, width } from './free';
-	import { svgPoint } from './geometry';
+	import { Blink } from './blink.svelte';
+	import { type Crease, loose, play, tap } from './fold';
+	import { squeeze, svgPoint, width } from './geometry';
 	import { t } from './i18n/index.svelte';
 	import Paper from './Paper.svelte';
 	import type { Sheet } from './sheet.svelte';
@@ -21,14 +21,11 @@
 	/** How near a tap must land to a crease to fold it, and how long the fold takes, in ms. */
 	const TAP = 0.12;
 	const SWING = 320;
-	/** How long the flaps keeping a tapped crease from folding light up, in ms. */
-	const LIGHT = 700;
 
 	let svg = $state<SVGSVGElement | undefined>(undefined);
 	let turning = $state<{ from: Point; base: Point[]; under: number[]; dir: Point; t: number; moved?: boolean; falling?: boolean } | undefined>(undefined);
 	let folding = $state(false);
-	let lit = $state<Set<number> | undefined>(undefined);
-	let unlight = 0;
+	const blink = new Blink();
 	let settling: (() => void) | undefined;
 	let view = $state.raw(framing());
 
@@ -46,7 +43,7 @@
 		});
 		return () => {
 			cancelAnimationFrame(loop);
-			clearTimeout(unlight);
+			blink.stop();
 			settling?.();
 		};
 	});
@@ -137,27 +134,9 @@
 		if (turning.moved) return letGo();
 		const at = toWorld(turning.from);
 		turning = undefined;
-		tap(at);
-	}
-
-	/** Folds the crease tapped, or lights what keeps it from folding. */
-	function tap(at: Point): void {
-		const { creases, pos, flaps, stack } = sheet;
-		const c = tapped(pos, flaps, stack, creases, at, TAP / view.s);
-		if (!c) return;
-		const moving = swinger(c, creases, pos, flaps, stack);
-		if (moving) swing(c, moving);
-		else light(blocking(c, creases, pos, flaps, stack));
-	}
-
-	/** Lights up the flaps keeping a tapped crease from folding, afresh on every tap. */
-	function light(flaps: number[]): void {
-		clearTimeout(unlight);
-		lit = undefined;
-		requestAnimationFrame(() => {
-			lit = new Set(flaps);
-			unlight = window.setTimeout(() => (lit = undefined), LIGHT);
-		});
+		const did = tap(at, TAP / view.s, sheet.creases, sheet.pos, sheet.flaps, sheet.stack);
+		if (did && 'inWay' in did) blink.show(did.inWay);
+		else if (did) swing(did.c, did.moving);
 	}
 </script>
 
@@ -181,7 +160,7 @@
 				colors={PAPER}
 				depth={!sheet.solved}
 				{pulse}
-				lit={lit && new Set(sheet.stack.flatMap((k, i) => (lit!.has(k) ? [i] : [])))}
+				lit={blink.places(sheet.stack)}
 				id="board"
 			/>
 		</g>

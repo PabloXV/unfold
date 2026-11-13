@@ -3,9 +3,9 @@
 	import { t } from './i18n/index.svelte';
 	import Paper from './Paper.svelte';
 	import { FONT, SIZE, runLine, type Result } from './card';
-	import { blocking, creases, loose, play, swinger, tapped } from './fold';
-	import { fit } from './free';
-	import { svgPoint, trianglePath } from './geometry';
+	import { Blink } from './blink.svelte';
+	import { creases, loose, play, tap } from './fold';
+	import { fit, svgPoint, trianglePath } from './geometry';
 	import { CAST, DEFAULT_PAPER, LIGHT } from './theme';
 	import type { Point } from './unfold';
 
@@ -31,10 +31,9 @@
 	const CX = SIZE / 2;
 	const CY = 500;
 	const SCALE = 280;
-	/** How near a tap must land to a crease to fold it, how long the fold takes, and how long blocking flaps light up, in ms. */
+	/** How near a tap must land to a crease to fold it, and how long the fold takes, in ms. */
 	const TAP = 0.2;
 	const SWING = 320;
-	const BLINK = 700;
 	const LINE = 48;
 	const FLAME = 46;
 	/** The grid of levels above the result line: square size, the gap between, and its baseline. */
@@ -54,8 +53,7 @@
 	let pos = $state.raw<Point[]>([]);
 	let stack = $state.raw<number[]>([]);
 	let folding = $state(false);
-	let lit = $state<Set<number> | undefined>(undefined);
-	let unlight = 0;
+	const blink = new Blink();
 	let settling: (() => void) | undefined;
 
 	const all = $derived(creases(flaps));
@@ -70,7 +68,7 @@
 	});
 
 	$effect(() => () => {
-		clearTimeout(unlight);
+		blink.stop();
 		settling?.();
 	});
 
@@ -115,15 +113,14 @@
 	function onpointerup(e: PointerEvent): void {
 		if (e.button > 0) return;
 		settling?.();
-		const c = tapped(pos, flaps, stack, all, cardPoint(e), TAP);
-		if (!c) return;
-		const moving = swinger(c, all, pos, flaps, stack);
-		if (!moving) return light(blocking(c, all, pos, flaps, stack));
+		const did = tap(cardPoint(e), TAP, all, pos, flaps, stack);
+		if (!did) return;
+		if ('inWay' in did) return blink.show(did.inWay);
 		folding = true;
 		settling = play(
 			SWING,
-			c,
-			moving,
+			did.c,
+			did.moving,
 			pos,
 			flaps,
 			stack,
@@ -134,16 +131,6 @@
 				onchange?.(pos, stack);
 			}
 		);
-	}
-
-	/** Lights up the flaps keeping a tapped crease from folding, afresh on every tap. */
-	function light(which: number[]): void {
-		clearTimeout(unlight);
-		lit = undefined;
-		requestAnimationFrame(() => {
-			lit = new Set(which);
-			unlight = window.setTimeout(() => (lit = undefined), BLINK);
-		});
 	}
 
 	export function element(): SVGSVGElement | undefined {
@@ -185,7 +172,7 @@
 			colors={PAPER}
 			creaseWidth={0.009}
 			{pulse}
-			lit={lit && new Set(stack.flatMap((k, i) => (lit!.has(k) ? [i] : [])))}
+			lit={blink.places(stack)}
 			id="card"
 		/>
 	</g>

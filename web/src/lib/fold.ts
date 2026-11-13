@@ -1,6 +1,4 @@
-import { fit, flat, inside } from './free';
-import { turn } from './geometry';
-import { overlap } from './stacking';
+import { fit, inside, overlap, overlaps, turn } from './geometry';
 import type { Point } from './unfold';
 
 /** A crease: its corners, the two flaps hinged on it, and the flaps on each side of it, which it cuts the paper into. */
@@ -15,6 +13,12 @@ function random(seed: number): () => number {
 		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
 		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 	};
+}
+
+/** Whether the paper lies flat: every flap the same side up, and no two overlapping. */
+export function flat(flaps: number[][], faceUp: number[], pos: Point[]): boolean {
+	const sides = flaps.map((f, k) => Math.sign(turn(f.map((v) => pos[v]))) * faceUp[k]);
+	return sides.every((s) => s === sides[0]) && overlaps(flaps, pos).size === 0;
 }
 
 const shared = (f: number[], g: number[]) => f.filter((v) => g.includes(v));
@@ -61,7 +65,7 @@ export function fold(pos: Point[], flaps: number[][], c: Crease, moving: number[
 }
 
 /** The stack once the moving flaps pass over: they land on top, turned over, so their own order reverses. */
-export function restack(stack: number[], moving: number[], s: number): number[] {
+function restack(stack: number[], moving: number[], s: number): number[] {
 	if (s >= 0) return stack;
 	return [...stack.filter((k) => !moving.includes(k)), ...stack.filter((k) => moving.includes(k)).reverse()];
 }
@@ -73,8 +77,16 @@ function away(p: Point, a: Point, b: Point): number {
 	return Math.hypot(p.x - a.x - dx * k, p.y - a.y - dy * k);
 }
 
+/** What a tap at `p` does: folds a crease, swinging `moving`, or lights `inWay`, what keeps it from folding; or nothing. */
+export function tap(p: Point, reach: number, all: Crease[], pos: Point[], flaps: number[][], stack: number[]): { c: Crease; moving: number[] } | { inWay: number[] } | undefined {
+	const c = tapped(pos, flaps, stack, all, p, reach);
+	if (!c) return;
+	const moving = swinger(c, all, pos, flaps, stack);
+	return moving ? { c, moving } : { inWay: blocking(c, all, pos, flaps, stack) };
+}
+
 /** The crease a tap at `p` means: the nearest within `reach` on any flap from the top down to the first one the tap lands inside. */
-export function tapped(pos: Point[], flaps: number[][], stack: number[], all: Crease[], p: Point, reach: number): Crease | undefined {
+function tapped(pos: Point[], flaps: number[][], stack: number[], all: Crease[], p: Point, reach: number): Crease | undefined {
 	let best: { c: Crease; d: number } | undefined;
 	for (const k of [...stack].reverse()) {
 		const f = flaps[k];
@@ -128,7 +140,7 @@ function inWay(c: Crease, all: Crease[], pos: Point[], flaps: number[][], stack:
 }
 
 /** What keeps a crease from folding: the fewer of the flaps in the way of either side. */
-export function blocking(c: Crease, all: Crease[], pos: Point[], flaps: number[][], stack: number[]): number[] {
+function blocking(c: Crease, all: Crease[], pos: Point[], flaps: number[][], stack: number[]): number[] {
 	const [x, y] = c.sides.map((side) => inWay(c, all, pos, flaps, stack, side));
 	return x.length <= y.length ? x : y;
 }
@@ -179,9 +191,9 @@ export function crumple(sheet: Point[], flaps: number[][], all: Crease[], seed: 
 	let pos = sheet;
 	let stack = flaps.map((_, i) => i);
 	const used: Crease[] = [];
-	const loose = (p: Point[], s: number[]) => used.filter((c) => swinger(c, all, p, flaps, s)).length;
+	const unburied = (p: Point[], s: number[]) => used.filter((c) => swinger(c, all, p, flaps, s)).length;
 	for (let i = Math.min(all.length, 1 + Math.floor(level / 2)); i > 0; i--) {
-		const before = loose(pos, stack);
+		const before = unburied(pos, stack);
 		const options = all.flatMap((c) =>
 			used.includes(c)
 				? []
@@ -189,7 +201,7 @@ export function crumple(sheet: Point[], flaps: number[][], all: Crease[], seed: 
 						if (inWay(c, all, pos, flaps, stack, side).length) return [];
 						const [p, s] = [fold(pos, flaps, c, side, -1), restack(stack, side, -1)];
 						if (swinger(c, all, p, flaps, s) !== side) return [];
-						return [{ c, p, s, big: side.length > FLAP, buries: before - loose(p, s) }];
+						return [{ c, p, s, big: side.length > FLAP, buries: before - unburied(p, s) }];
 					}),
 		);
 		if (!options.length) break;
@@ -225,14 +237,9 @@ function sameness(pos: Point[], flaps: number[][], pairs: number[][]): number {
 }
 
 /** The flat sheet with corners nudged until no flap is symmetric, a sliver, or its neighbor's mirror image, kept flat. */
-export function lopsided(sheet: Point[], flaps: number[][], faceUp: number[], seed: number, level: number): Point[] {
+export function lopsided(sheet: Point[], flaps: number[][], faceUp: number[], all: Crease[], seed: number, level: number): Point[] {
 	const rnd = random(seed * 613 + level * 71);
-	const pairs = flaps.flatMap((f, i) =>
-		flaps.slice(i + 1).flatMap((g) => {
-			const ab = shared(f, g);
-			return ab.length === 2 ? [[...ab, f.find((v) => !ab.includes(v))!, g.find((v) => !ab.includes(v))!]] : [];
-		}),
-	);
+	const pairs = all.map(({ a, b, hinge }) => [a, b, ...hinge.map((k) => flaps[k].find((v) => v !== a && v !== b)!)]);
 	const reach = (0.25 * flaps.reduce((t, f) => t + dist(sheet[f[0]], sheet[f[1]]), 0)) / flaps.length;
 	let pos = sheet;
 	let bad = sameness(pos, flaps, pairs);

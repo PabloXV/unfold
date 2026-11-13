@@ -3,8 +3,8 @@
 </script>
 
 <script lang="ts">
-	import { trianglePath, turn } from './geometry';
-	import { overlap } from './stacking';
+	import { overlap, trianglePath, turn } from './geometry';
+
 	import type { Point } from './unfold';
 
 	let {

@@ -7,7 +7,7 @@
 	import Card from '#lib/Card.svelte';
 	import Icon from '#lib/Icon.svelte';
 	import { Sheet } from '#lib/sheet.svelte.ts';
-	import { fit } from '#lib/free.ts';
+	import { fit } from '#lib/geometry.ts';
 	import { dailySeed, formatDay, loadCore, paperColors, parseCode, today, type Point } from '#lib/unfold.ts';
 	import { BUDGET, finished, frontier, grid, loadRun, overs, saveRun, spent, streak, type Run } from '#lib/run.ts';
 	import { forget, readJson, writeJson } from '#lib/storage.ts';

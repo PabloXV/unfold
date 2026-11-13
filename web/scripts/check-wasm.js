@@ -1,10 +1,10 @@
 import { readFileSync } from 'node:fs';
-import { initSync, Attempt, dailySeed } from '../src/lib/wasm/unfold_wasm.js';
+import { initSync, Puzzle, dailySeed } from '../src/lib/wasm/unfold_wasm.js';
 
 initSync({ module: readFileSync(new URL('../src/lib/wasm/unfold_wasm_bg.wasm', import.meta.url)) });
 
-/** FNV-1a over 64-bit little-endian words, as in core's tests. */
-function fingerprint(attempt) {
+/** FNV-1a over 64-bit little-endian words of the flaps and the shape's exact bits, recorded from native. */
+function fingerprint(puzzle) {
 	let h = 0xcbf29ce484222325n;
 	const view = new DataView(new ArrayBuffer(8));
 	const eatBits = () => {
@@ -15,29 +15,28 @@ function fingerprint(attempt) {
 	};
 	const eatInt = (n) => (view.setBigUint64(0, BigInt(n), true), eatBits());
 	const eatFloat = (x) => (view.setFloat64(0, x, true), eatBits());
-	attempt.flaps().forEach(eatInt);
-	attempt.slots().forEach(eatInt);
-	attempt.shape().forEach(eatFloat);
+	puzzle.flaps().forEach(eatInt);
+	puzzle.shape().forEach(eatFloat);
 	return h;
 }
 
 const known = [
-	[0x000000, 1, 0xb2697debe2fa8861n],
-	[0x000000, 5, 0x015fda193863ecb4n],
-	[0xabc123, 9, 0x98b8e47df6bd0032n],
-	[0xffffff, 20, 0xb1cf9c856490be4cn],
-	[0xdc86b0, 3, 0xc25d7a263bbf4e32n],
-	[0x7811db, 12, 0xdc8f8103018988dcn]
+	[0x000000, 1, 0x723e0f5324d1ee81n],
+	[0x000000, 5, 0xda2388d9923124b4n],
+	[0xabc123, 9, 0x11c87c38eb352872n],
+	[0xffffff, 20, 0xa35b1774db4e1377n],
+	[0xdc86b0, 3, 0xa521501eda7ba95fn],
+	[0x7811db, 12, 0x7d0b670c1641179fn]
 ];
 let failed = 0;
 for (const [seed, level, hash] of known) {
-	const attempt = new Attempt(seed, level);
-	const got = fingerprint(attempt);
+	const puzzle = new Puzzle(seed, level);
+	const got = fingerprint(puzzle);
 	if (got !== hash) {
-		console.error(`${attempt.code}: got ${got.toString(16)}, want ${hash.toString(16)}`);
+		console.error(`${puzzle.code}: got ${got.toString(16)}, want ${hash.toString(16)}`);
 		failed++;
 	}
-	attempt.free();
+	puzzle.free();
 }
 for (const [day, seed] of [[0, 0x50dc75], [1, 0xb62b7b], [20000, 0xdc86b0], [20400, 0x7811db]]) {
 	if (dailySeed(day) !== seed) {

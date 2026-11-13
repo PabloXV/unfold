@@ -1,7 +1,6 @@
-import { type Crease, creases, crumple, lopsided } from './fold';
-import { flat } from './free';
+import { type Crease, creases, crumple, flat, lopsided } from './fold';
 import { points, turn } from './geometry';
-import { Attempt, type Point } from './unfold';
+import { Puzzle, type Point } from './unfold';
 
 /** One go at a level: the folded paper, unfolded a crease at a time until it lies flat. */
 export class Sheet {
@@ -28,7 +27,7 @@ export class Sheet {
 	#before: number;
 
 	constructor(seed: number, level: number, before = 0) {
-		const a = new Attempt(seed, level);
+		const a = new Puzzle(seed, level);
 		this.seed = seed;
 		this.level = level;
 		this.code = a.code;
@@ -36,9 +35,9 @@ export class Sheet {
 		this.flaps = groups(a.flaps(), 3);
 		const shape = points(a.shape());
 		this.faceUp = this.flaps.map((f) => Math.sign(turn(f.map((v) => shape[v]))));
-		this.upright = lopsided(points(a.upright()), this.flaps, this.faceUp, seed, level);
-		a.free();
 		this.creases = creases(this.flaps);
+		this.upright = lopsided(points(a.upright()), this.flaps, this.faceUp, this.creases, seed, level);
+		a.free();
 		const start = crumple(this.upright, this.flaps, this.creases, seed, level);
 		[this.pos, this.stack, this.par] = [start.pos, start.stack, start.par];
 		this.#before = before;

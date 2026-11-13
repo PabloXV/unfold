@@ -2,7 +2,7 @@ import { contrast } from './accent';
 import { FONT, SIZE } from './card';
 import { LIGHT } from './theme';
 
-export const STORY = { width: 1080, height: 1920 };
+const STORY = { width: 1080, height: 1920 };
 const CARD = 880;
 const CARD_TOP = 420;
 const RADIUS = 40;

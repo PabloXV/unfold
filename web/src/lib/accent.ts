@@ -63,7 +63,7 @@ const MIN_CHROMA = 0.04;
 const passes = (hex: string, backdrops: string[]) => backdrops.every((b) => contrast(hex, b) >= MIN_CONTRAST);
 
 /** The color at the nearest lightness, same hue, with 3:1 contrast against every backdrop. */
-export function reachContrast(hex: string, backdrops: string[]): string | undefined {
+function reachContrast(hex: string, backdrops: string[]): string | undefined {
 	if (passes(hex, backdrops)) return hex;
 	const color = oklch(hex);
 	for (let step = 1; step <= 100; step++) {
