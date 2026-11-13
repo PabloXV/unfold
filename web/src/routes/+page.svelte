@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, tick, untrack } from 'svelte';
 	import { fly } from 'svelte/transition';
-	import { cubicIn, cubicOut } from 'svelte/easing';
+	import { cubicInOut } from 'svelte/easing';
 	import { replaceState } from '$app/navigation';
 	import Board from '#lib/Board.svelte';
 	import Card from '#lib/Card.svelte';
@@ -21,12 +21,10 @@
 	const RESTART_TIME = 2000;
 	const NOTICE_TIME = 1500;
 	const CARD_DELAY = 1500;
-	/** After a solve, time to see the flat paper before the next level slides in. */
-	const ADVANCE_DELAY = 2000;
-	/** The old level slides off first; the new one follows once it's mostly gone. */
-	const SLIDE_OUT = 240;
-	const SLIDE_IN = 380;
-	const SLIDE_GAP = 130;
+	/** After a solve, time to see the flat paper before the levels slide. */
+	const ADVANCE_DELAY = 650;
+	/** The old level slides off as the new one slides in beside it, together, like one strip. */
+	const SLIDE = 320;
 	const BACKDROPS = { light: [LIGHT.bg, LIGHT.spot], dark: [DARK.bg, DARK.spot] };
 
 	let game = $state.raw<Sheet | undefined>(undefined);
@@ -336,7 +334,7 @@
 	<div class="board">
 		{#if game}
 			{#key game}
-				<div class="slide" in:fly={{ x: `${slide * 70}%`, opacity: 0, duration: SLIDE_IN, delay: SLIDE_GAP, easing: cubicOut }} out:fly={{ x: `${-slide * 70}%`, opacity: 0, duration: SLIDE_OUT, easing: cubicIn }}>
+				<div class="slide" in:fly={{ x: `${slide * 100}%`, opacity: 0, duration: SLIDE, easing: cubicInOut }} out:fly={{ x: `${-slide * 100}%`, opacity: 0, duration: SLIDE, easing: cubicInOut }}>
 					<Board sheet={game} />
 				</div>
 			{/key}
