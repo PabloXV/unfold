@@ -29,18 +29,16 @@ export const en = {
 	shareLink: 'Share link',
 	cardTools: 'Card',
 	language: 'Language',
-	board: (crossings: number, moves: number) => `Puzzle board: ${crossings} crossings, ${moves} moves`,
+	board: (moves: number) => `Paper: ${moves} moves`,
 	cardLabel: (date: string, score: string) => `Share card: ${date}, ${score}`,
 	help: [
-		'The paper is folded up around a circle. Move its dots until no creases cross, and it unfolds.',
-		'Drag a dot along the circle; the others shift over to make room. Setting a dot down somewhere new is a move. To cancel, drag it far outside the circle.',
+		'The paper is folded up. Drag its corners anywhere until it lies flat: no flap over another, and none turned over.',
+		'Each corner you drag somewhere new is a move. A corner tucked under the paper shows a dashed ring; drag it and it slides out from underneath. Drag anywhere off the corners to turn the whole paper over, which is free.',
 		'Each day is one run of levels that get harder. "Solvable in 4" is the fewest moves a level takes, and the run has 10 extra moves to spend. Go over, finish that level, and the run is done. A new one comes tomorrow.',
 		'Replay any level you reached with ‹ ›, and share any you solved; drag the card\'s corners to fold the paper into a shape of your own first. The fire counts the days in a row you finished a run.'
 	],
 	keys: {
-		move: 'move around the circle',
-		select: 'pick up, set down',
-		putBack: 'put back',
+		levels: 'previous, next level',
 		restart: 'restart',
 		copy: 'copy link'
 	}

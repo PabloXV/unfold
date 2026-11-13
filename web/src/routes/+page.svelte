@@ -3,10 +3,11 @@
 	import { fly } from 'svelte/transition';
 	import { cubicIn, cubicOut } from 'svelte/easing';
 	import { replaceState } from '$app/navigation';
-	import Board from '#lib/Board.svelte';
+	import FreeBoard from '#lib/FreeBoard.svelte';
 	import Card from '#lib/Card.svelte';
 	import Icon from '#lib/Icon.svelte';
-	import { Game } from '#lib/game.svelte.ts';
+	import { Sheet } from '#lib/sheet.svelte.ts';
+	import { fit } from '#lib/free.ts';
 	import { dailySeed, formatDay, loadCore, paperColors, parseCode, today, type Point } from '#lib/unfold.ts';
 	import { BUDGET, finished, frontier, grid, loadRun, overs, saveRun, spent, streak, type Run } from '#lib/run.ts';
 	import { forget, readJson, writeJson } from '#lib/storage.ts';
@@ -20,7 +21,7 @@
 	const RESTART_TIME = 2000;
 	const NOTICE_TIME = 1500;
 	const CARD_DELAY = 1500;
-	/** After a solve, time to watch the paper unfold before the next level slides in. */
+	/** After a solve, time to see the flat paper before the next level slides in. */
 	const ADVANCE_DELAY = 2000;
 	/** The old level slides off first; the new one follows once it's mostly gone. */
 	const SLIDE_OUT = 240;
@@ -29,36 +30,34 @@
 	const RESHAPED_KEY = 'unfold:reshaped';
 	const BACKDROPS = { light: [LIGHT.bg, LIGHT.spot], dark: [DARK.bg, DARK.spot] };
 
-	let game = $state.raw<Game | undefined>(undefined);
+	let game = $state.raw<Sheet | undefined>(undefined);
 	/** Set when playing a day's seed. */
 	let day = $state<number | undefined>(undefined);
 	/** The day's run, while playing a day's seed. */
 	let run = $state.raw<Run | undefined>(undefined);
-	/** The solved level the card shows, as it unfolded. */
-	let cardShape = $state.raw<{ level: number; flaps: number[][]; faceUp: number[]; unfolded: Point[] } | undefined>(undefined);
+	/** The solved level the card shows, as it lay flat. */
+	let cardShape = $state.raw<{ level: number; flaps: number[][]; faceUp: number[] } | undefined>(undefined);
 	/** Which way the board slides when the level changes: 1 to the next, -1 back, 0 in place. */
 	let slide = $state<1 | -1 | 0>(0);
 	let paper = $state.raw<string[]>([]);
 	let dark = $state(false);
 	let cardOpen = $state(false);
 	let helpOpen = $state(false);
-	/** Whether the card's shape differs from how it unfolded. */
+	/** Whether the card's shape differs from how the paper lay when solved. */
 	let reshaped = $state(false);
-	/** The card's corners now, and as the paper first unfolded. */
+	/** The card's corners and flaps now, and as the paper lay when solved. */
 	let corners = $state.raw<Point[] | undefined>(undefined);
-	let unfoldedCorners: Point[] | undefined;
+	let solvedShape: Solved | undefined;
 	/** The card's flaps bottom to top. */
 	let order = $state.raw<number[]>([]);
 	let cardView = $state<Card | undefined>(undefined);
 	/** The card as a PNG, made ahead so sharing opens the share sheet right on the tap. */
 	let png: Promise<Blob> | undefined;
-	/** Shown only once the keyboard is used. */
-	let showCursor = $state(false);
 	let restartAsked = $state(false);
 	let notice = $state('');
 	let failed = $state(false);
 	/** Levels left with [ and ], kept as they were. */
-	const shelf = new Map<number, Game>();
+	const shelf = new Map<number, Sheet>();
 	let restartTimer: ReturnType<typeof setTimeout> | undefined;
 	let advanceTimer: ReturnType<typeof setTimeout> | undefined;
 	let noticeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -77,6 +76,8 @@
 	const streakDays = $derived(daily && run ? streak(day!) : 0);
 	/** Extra moves left in the run, counting the level being played; below zero on its last level. */
 	const spare = $derived(atFrontier ? BUDGET - spent(run!) - Math.max(0, game!.moves - game!.par) : 0);
+
+	type Solved = { corners: Point[]; order: number[] };
 
 	const here = () => location.origin + location.pathname;
 	const shapeKey = (level: number) => `unfold:shape:${day}:${level}`;
@@ -147,12 +148,10 @@
 		day = seed === dailySeed(now) ? now : undefined;
 		run = day === undefined ? undefined : loadRun(day);
 		const level = run ? (asked >= 1 ? Math.min(asked, frontier(run)) : frontier(run)) : asked;
-		for (const g of shelf.values()) g.free();
 		shelf.clear();
-		game?.free();
 		slide = 0;
 		clearTimeout(advanceTimer);
-		game = new Game(seed, level, movesBefore(level));
+		game = new Sheet(seed, level, movesBefore(level));
 		paper = paperColors(seed);
 		closeCard();
 		corners = cardShape = undefined;
@@ -166,9 +165,9 @@
 	}
 
 	/** Saves the run as its level is played; a solve then slides on to the next level, or ends the run with the card. */
-	function progress(g: Game, moves: number, solved: boolean): void {
+	function progress(g: Sheet, moves: number, solved: boolean): void {
 		if (!run || day === undefined || g.seed !== dailySeed(day)) return;
-		if (solved && g.solvedAt !== undefined && g.level <= frontier(run)) writeJson(solvedKey(g.level), round(g.unfolded));
+		if (solved && g.level <= frontier(run)) writeJson(solvedKey(g.level), { corners: round(fit(g.pos)), order: g.stack });
 		if (finished(run) || g.level !== frontier(run)) return;
 		if (!solved) {
 			if (moves !== run.pending) saveRun(day, (run = { ...run, pending: moves }));
@@ -195,18 +194,18 @@
 		return !daily || level <= frontier(run!) ? level : undefined;
 	}
 
-	/** The card for the level on the board: its paper as it unfolded when solved, as reshaped if it was. */
+	/** The card for the level on the board: its paper as it lay flat when solved, as reshaped if it was. */
 	function openCard(): void {
 		if (!game || !shareable) return;
 		const { level, flaps, faceUp, dots } = game;
-		const solved = readJson<Point[]>(solvedKey(level));
-		cardShape = { level, flaps, faceUp, unfolded: solved?.length === dots ? solved : game.sheet() };
-		unfoldedCorners = cardShape.unfolded;
+		cardShape = { level, flaps, faceUp };
+		const solved = readJson<Solved>(solvedKey(level));
+		solvedShape = solved?.corners?.length === dots && solved.order?.length === flaps.length ? solved : { corners: game.upright, order: flatOrder() };
 		const saved = readJson<Point[]>(shapeKey(level));
-		reshaped = saved?.length === dots;
-		corners = reshaped ? saved! : unfoldedCorners;
 		const stack = readJson<number[]>(orderKey(level));
-		order = stack?.length === flaps.length ? stack : flatOrder();
+		reshaped = saved?.length === dots && stack?.length === flaps.length;
+		corners = reshaped ? saved! : solvedShape.corners;
+		order = reshaped ? stack! : solvedShape.order;
 		cardOpen = true;
 	}
 
@@ -227,8 +226,7 @@
 	const round = (pts: Point[]) => pts.map((p) => ({ x: +p.x.toFixed(4), y: +p.y.toFixed(4) }));
 
 	function resetShape(): void {
-		if (unfoldedCorners) corners = unfoldedCorners;
-		order = flatOrder();
+		if (solvedShape) ({ corners, order } = solvedShape);
 		reshaped = false;
 		forget(shapeKey(cardShape!.level));
 		forget(orderKey(cardShape!.level));
@@ -272,7 +270,7 @@
 		slide = step;
 		closeCard();
 		shelf.set(game.level, game);
-		game = shelf.get(level) ?? new Game(game.seed, level, movesBefore(level));
+		game = shelf.get(level) ?? new Sheet(game.seed, level, movesBefore(level));
 		shelf.delete(level);
 		restartAsked = false;
 		showUrl();
@@ -293,8 +291,7 @@
 		closeCard();
 		const { seed, level } = game;
 		const before = atFrontier ? game.moves : 0;
-		game.free();
-		game = new Game(seed, level, before);
+		game = new Sheet(seed, level, before);
 	}
 
 	function flash(text: string): void {
@@ -311,16 +308,7 @@
 		}
 		if (!game) return;
 		if (e.key !== 'r') restartAsked = false;
-		const g = game;
-		const select = () => (!g.solved ? g.select() : neighbour(1) !== undefined ? jump(1) : openCard());
 		const keys: Record<string, () => void> = {
-			ArrowLeft: () => g.step(1),
-			h: () => g.step(1),
-			ArrowRight: () => g.step(-1),
-			l: () => g.step(-1),
-			' ': select,
-			Enter: select,
-			Escape: () => g.putBack(),
 			'[': () => jump(-1),
 			']': () => jump(1),
 			r: restart,
@@ -330,12 +318,11 @@
 		const act = keys[e.key];
 		if (!act) return;
 		e.preventDefault();
-		if (['ArrowLeft', 'ArrowRight', 'h', 'l', ' ', 'Enter', 'Escape'].includes(e.key)) showCursor = true;
 		act();
 	}
 </script>
 
-<svelte:window {onkeydown} onpointerdown={() => (showCursor = false)} />
+<svelte:window {onkeydown} />
 
 <main>
 	<header>
@@ -352,7 +339,7 @@
 		{#if game}
 			{#key game}
 				<div class="slide" in:fly={{ x: `${slide * 70}%`, opacity: 0, duration: SLIDE_IN, delay: SLIDE_GAP, easing: cubicOut }} out:fly={{ x: `${-slide * 70}%`, opacity: 0, duration: SLIDE_OUT, easing: cubicIn }}>
-					<Board {game} {showCursor} />
+					<FreeBoard sheet={game} />
 				</div>
 			{/key}
 		{:else if failed}
@@ -407,12 +394,8 @@
 					<p>{paragraph}</p>
 				{/each}
 				<dl class="keys">
-					<dt>← →</dt>
-					<dd>{t().keys.move}</dd>
-					<dt>space</dt>
-					<dd>{t().keys.select}</dd>
-					<dt>esc</dt>
-					<dd>{t().keys.putBack}</dd>
+					<dt>[ ]</dt>
+					<dd>{t().keys.levels}</dd>
 					<dt>r</dt>
 					<dd>{t().keys.restart}</dd>
 					<dt>c</dt>

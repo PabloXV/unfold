@@ -2,25 +2,8 @@ import { turn } from './geometry';
 import { overlaps } from './stacking';
 import type { Point } from './unfold';
 
-/** How close two corners may start, and how far out any corner may go. */
-const SPREAD = 0.14;
+/** How far from the board's center a finger can drag a corner. */
 export const REACH = 1.15;
-
-/** A seeded generator, so a seed and level always scramble the same way. */
-function random(seed: number): () => number {
-	let s = seed >>> 0;
-	return () => {
-		s = (s + 0x6d2b79f5) >>> 0;
-		let t = Math.imul(s ^ (s >>> 15), 1 | s);
-		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-	};
-}
-
-/** How many corners a level's scramble moves, which is also the fewest drags it needs at most. */
-export function moved(level: number, dots: number): number {
-	return Math.min(dots - 1, 1 + Math.floor(level * 0.6));
-}
 
 /** Whether the paper lies flat: every flap the same side up, and no two overlapping. */
 export function flat(flaps: number[][], faceUp: number[], pos: Point[]): boolean {
@@ -28,20 +11,9 @@ export function flat(flaps: number[][], faceUp: number[], pos: Point[]): boolean
 	return sides.every((s) => s === sides[0]) && overlaps(flaps, pos).size === 0;
 }
 
-/** The flat sheet with some corners dragged to random spots, tangled and with corners kept apart. */
-export function scramble(sheet: Point[], flaps: number[][], faceUp: number[], seed: number, level: number): Point[] {
-	const next = random(seed * 977 + level);
-	const k = moved(level, sheet.length);
-	for (;;) {
-		const pos = sheet.map((p) => ({ ...p }));
-		const order = sheet.map((_, v) => v).sort(() => next() - 0.5);
-		for (const v of order.slice(0, k)) {
-			const [a, r] = [next() * 2 * Math.PI, Math.sqrt(next()) * 0.95];
-			pos[v] = { x: r * Math.cos(a), y: r * Math.sin(a) };
-		}
-		const apart = pos.every((p, i) => pos.every((q, j) => i === j || Math.hypot(p.x - q.x, p.y - q.y) >= SPREAD));
-		if (apart && !flat(flaps, faceUp, pos)) return pos;
-	}
+/** Each dot at its slot on the circle, where the puzzle starts. */
+export function circle(slots: number[]): Point[] {
+	return slots.map((s) => ({ x: Math.cos((2 * Math.PI * s) / slots.length), y: Math.sin((2 * Math.PI * s) / slots.length) }));
 }
 
 function inside([a, b, c]: Point[], p: Point): boolean {
@@ -56,4 +28,56 @@ export function buried(stack: number[], flaps: number[][], pos: Point[]): number
 		const own = Math.max(...flaps.flatMap((f, k) => (f.includes(v) ? [level.get(k)!] : [])));
 		return stack.slice(own + 1).some((k) => inside(flaps[k].map((w) => pos[w]), p)) ? [v] : [];
 	});
+}
+
+const along = (pos: Point[], d: Point) => pos.map((p) => p.x * d.x + p.y * d.y);
+
+/** How wide the paper is along a direction. */
+export function width(pos: Point[], d: Point): number {
+	const s = along(pos, d);
+	return Math.max(...s) - Math.min(...s);
+}
+
+/** The paper turned over part way along a direction: squeezed toward its middle, mirrored once t reaches 1. */
+export function squeeze(pos: Point[], d: Point, t: number): Point[] {
+	const s = along(pos, d);
+	const mid = (Math.min(...s) + Math.max(...s)) / 2;
+	const k = Math.cos(Math.PI * t) - 1;
+	return pos.map((p, v) => ({ x: p.x + (s[v] - mid) * k * d.x, y: p.y + (s[v] - mid) * k * d.y }));
+}
+
+/** Where a dropped corner settles: at least `space` from every other corner, and `thin` from the far edge of each
+ * of its flaps, on the side it was dropped on, or the side it came from if dropped right on the edge. */
+export function rest(pos: Point[], flaps: number[][], v: number, from: Point, space: number, thin: number): Point {
+	const edges = flaps.filter((f) => f.includes(v)).map((f) => f.filter((w) => w !== v).map((w) => pos[w]));
+	const off = ([a, b]: Point[], p: Point) => ((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)) / Math.hypot(b.x - a.x, b.y - a.y);
+	let p = pos[v];
+	for (let pass = 0; pass < 8; pass++) {
+		const was = p;
+		const near = pos.find((q, w) => w !== v && Math.hypot(p.x - q.x, p.y - q.y) < space);
+		if (near) {
+			const d = Math.hypot(p.x - near.x, p.y - near.y);
+			const [ux, uy] = d > 1e-9 ? [(p.x - near.x) / d, (p.y - near.y) / d] : [-p.y || 1, p.x];
+			const k = space / Math.hypot(ux, uy);
+			p = { x: near.x + ux * k, y: near.y + uy * k };
+		}
+		for (const [a, b] of edges) {
+			const d = off([a, b], p);
+			if (Math.abs(d) >= thin) continue;
+			const side = Math.sign(d) || Math.sign(off([a, b], from)) || 1;
+			const len = Math.hypot(b.x - a.x, b.y - a.y);
+			const push = side * thin - d;
+			p = { x: p.x - ((b.y - a.y) / len) * push, y: p.y + ((b.x - a.x) / len) * push };
+		}
+		if (p === was) break;
+	}
+	return p;
+}
+
+/** The corners moved and scaled so the paper's extremes are centered and its farthest corner sits on the unit circle. */
+export function fit(pos: Point[]): Point[] {
+	const [xs, ys] = [pos.map((p) => p.x), pos.map((p) => p.y)];
+	const [cx, cy] = [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2];
+	const r = Math.max(...pos.map((p) => Math.hypot(p.x - cx, p.y - cy))) || 1;
+	return pos.map((p) => ({ x: (p.x - cx) / r, y: (p.y - cy) / r }));
 }
