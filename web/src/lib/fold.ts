@@ -86,11 +86,19 @@ export function tapped(pos: Point[], flaps: number[][], stack: number[], all: Cr
 	return best?.c;
 }
 
-/** Whether one side of a crease can swing: no flap off it lies over any of its flaps. */
-export function free(pos: Point[], flaps: number[][], stack: number[], moving: number[]): boolean {
+/** The flaps off one side of a crease lying over any of its flaps, which keep it from swinging. */
+export function blockers(pos: Point[], flaps: number[][], stack: number[], moving: number[]): number[] {
 	const level = new Map(stack.map((k, i) => [k, i]));
 	const tri = (k: number) => flaps[k].map((w) => pos[w]);
-	return moving.every((m) => stack.every((k) => moving.includes(k) || level.get(k)! < level.get(m)! || !overlap(tri(m), tri(k))));
+	return stack.filter((k) => !moving.includes(k) && moving.some((m) => level.get(k)! > level.get(m)! && overlap(tri(m), tri(k))));
+}
+
+const free = (pos: Point[], flaps: number[][], stack: number[], moving: number[]) => blockers(pos, flaps, stack, moving).length === 0;
+
+/** What keeps a crease from folding: the fewer of the flaps lying on either side. */
+export function blocking(c: Crease, pos: Point[], flaps: number[][], stack: number[]): number[] {
+	const [x, y] = c.sides.map((side) => blockers(pos, flaps, stack, side));
+	return x.length <= y.length ? x : y;
 }
 
 /** The side of a crease that swings when tapped: the smaller if nothing lies on it, else the larger, else none. */
@@ -99,29 +107,40 @@ export function swinger(c: Crease, pos: Point[], flaps: number[][], stack: numbe
 	return [small, large].find((side) => free(pos, flaps, stack, side));
 }
 
-/** The flat sheet folded over up to `k` different creases in turn, each swinging a side nothing lies on, and the side
- * a tap would swing back; so tapping them in reverse unfolds it, and as each needs a tap, that many is the fewest moves. */
+/** The most flaps a scrambling fold swings, as an origami folder folds flaps rather than halves of the sheet. */
+const FLAP = 3;
+/** The most earlier folds one scrambling fold may cover, so that most levels unfold in more than one order. */
+const BURY = 1;
+
+/** The flat sheet folded over up to `k` different creases in turn, each swinging a small side nothing lies on, covering
+ * few earlier folds, and the side a tap swings back; so tapping them in reverse unfolds it, in that many moves at fewest. */
 export function crumple(sheet: Point[], flaps: number[][], all: Crease[], seed: number, level: number) {
 	const rnd = random(seed * 977 + level * 131);
 	let pos = sheet;
 	let stack = flaps.map((_, i) => i);
-	const used = new Set<Crease>();
+	const used: Crease[] = [];
+	const loose = (p: Point[], s: number[]) => used.filter((c) => swinger(c, p, flaps, s)).length;
 	for (let i = Math.min(all.length, 1 + Math.floor(level / 2)); i > 0; i--) {
+		const before = loose(pos, stack);
 		const options = all.flatMap((c) =>
-			used.has(c)
+			used.includes(c)
 				? []
 				: c.sides.flatMap((side) => {
 						if (!free(pos, flaps, stack, side)) return [];
 						const [p, s] = [fold(pos, flaps, c, side, -1), restack(stack, side, -1)];
-						return swinger(c, p, flaps, s) === side ? [{ c, p, s }] : [];
+						if (swinger(c, p, flaps, s) !== side) return [];
+						return [{ c, p, s, big: side.length > FLAP, buries: before - loose(p, s) }];
 					}),
 		);
 		if (!options.length) break;
-		const pick = options[Math.floor(rnd() * options.length)];
+		const best = options.filter((o) => !o.big || options.every((q) => q.big));
+		const fewest = Math.max(BURY, Math.min(...best.map((o) => o.buries)));
+		const pool = best.filter((o) => o.buries <= fewest);
+		const pick = pool[Math.floor(rnd() * pool.length)];
 		[pos, stack] = [pick.p, pick.s];
-		used.add(pick.c);
+		used.push(pick.c);
 	}
-	return { pos, stack, par: used.size };
+	return { pos, stack, par: used.length };
 }
 
 /** How different a flap's sides must be, as a share of its longest; its smallest angle, in radians; and how far

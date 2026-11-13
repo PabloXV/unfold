@@ -15,6 +15,7 @@
 		depth = false,
 		creaseWidth,
 		pulse,
+		lit,
 		id
 	}: {
 		/** Vertex triples, bottom to top. */
@@ -29,6 +30,8 @@
 		creaseWidth?: number;
 		/** Creases, as "low,high" corners, that can fold now: each gets a glow, light around a dark core, that strengthens and fades. */
 		pulse?: Set<string>;
+		/** Flaps, by place in `flaps`, to blink lighter for a moment. */
+		lit?: Set<number>;
 		/** Unique per sheet on the page, for its clip paths. */
 		id: string;
 	} = $props();
@@ -99,6 +102,9 @@
 	</defs>
 	{#each flapPaths as d, k (k)}
 		<path {d} style:fill={fill(k)} />
+		{#if lit?.has(k)}
+			<path {d} class="lit" />
+		{/if}
 		{#if above[k]}
 			<g clip-path="url(#{id}-flap-{k})">
 				{#each CAST_STEPS as s (s.step)}
@@ -142,6 +148,16 @@
 	.glow {
 		opacity: 0.2;
 		animation: glow 1.5s ease-in-out infinite;
+	}
+	.lit {
+		fill: #ffffff;
+		opacity: 0;
+		animation: lit 0.35s ease-in-out 2;
+	}
+	@keyframes lit {
+		50% {
+			opacity: 0.55;
+		}
 	}
 	.still {
 		visibility: hidden;

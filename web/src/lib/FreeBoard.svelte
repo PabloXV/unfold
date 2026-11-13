@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { type Crease, fold, restack as foldOver, swinger, tapped } from './fold';
+	import { type Crease, blocking, fold, restack as foldOver, swinger, tapped } from './fold';
 	import { REACH, buried, rest, squeeze, width } from './free';
 	import { nearestTo, svgPoint } from './geometry';
 	import { t } from './i18n/index.svelte';
@@ -26,11 +26,15 @@
 	/** How near a tap must land to a crease to fold it, and how long the fold takes, in ms. */
 	const TAP = 0.12;
 	const SWING = 320;
+	/** How long the flaps keeping a tapped crease from folding light up, in ms. */
+	const LIGHT = 700;
 
 	let svg = $state<SVGSVGElement | undefined>(undefined);
 	let drag = $state<{ v: number; from: Point; was: Point; started: boolean } | undefined>(undefined);
 	let turning = $state<{ from: Point; base: Point[]; under: number[]; dir: Point; t: number; moved?: boolean; falling?: boolean } | undefined>(undefined);
 	let folding = $state(false);
+	let lit = $state<Set<number> | undefined>(undefined);
+	let unlight = 0;
 	let settling: (() => void) | undefined;
 	let raf = 0;
 	let view = $state.raw(framing());
@@ -58,6 +62,7 @@
 		return () => {
 			cancelAnimationFrame(loop);
 			cancelAnimationFrame(raf);
+			clearTimeout(unlight);
 			settling?.();
 		};
 	});
@@ -226,7 +231,19 @@
 	function tap(at: Point): void {
 		turning = undefined;
 		const c = sheet.creases && tapped(sheet.pos, sheet.flaps, sheet.stack, sheet.creases, toWorld(at), TAP / view.s);
-		if (c) swing(c);
+		if (!c) return;
+		if (swinger(c, sheet.pos, sheet.flaps, sheet.stack)) return swing(c);
+		light(blocking(c, sheet.pos, sheet.flaps, sheet.stack));
+	}
+
+	/** Lights up the flaps keeping a tapped crease from folding, afresh on every tap. */
+	function light(flaps: number[]): void {
+		clearTimeout(unlight);
+		lit = undefined;
+		requestAnimationFrame(() => {
+			lit = new Set(flaps);
+			unlight = window.setTimeout(() => (lit = undefined), LIGHT);
+		});
 	}
 
 
@@ -245,7 +262,7 @@
 		onpointercancel={onpointerup}
 	>
 		<g class="paper">
-			<Paper flaps={sheet.stack.map((k) => sheet.flaps[k])} faceUp={sheet.stack.map((k) => sheet.faceUp[k])} pos={shown} colors={PAPER} depth={!sheet.solved} pulse={loose} id="board" />
+			<Paper flaps={sheet.stack.map((k) => sheet.flaps[k])} faceUp={sheet.stack.map((k) => sheet.faceUp[k])} pos={shown} colors={PAPER} depth={!sheet.solved} pulse={loose} lit={lit && new Set(sheet.stack.flatMap((k, i) => (lit!.has(k) ? [i] : [])))} id="board" />
 		</g>
 		{#each hidden as v (v)}
 			<circle class="hidden" cx={shown[v].x} cy={-shown[v].y} r="0.045" />
