@@ -1,11 +1,11 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import { FIRE } from './Icon.svelte';
 	import { t } from './i18n/index.svelte';
 	import Paper from './Paper.svelte';
 	import { FONT, SIZE, runLine, type Result } from './card';
-	import { nearestTo, svgPoint, trianglePath } from './geometry';
-	import { overlaps, restack } from './stacking';
+	import { blocking, creases, loose, play, swinger, tapped } from './fold';
+	import { fit } from './free';
+	import { svgPoint, trianglePath } from './geometry';
 	import { CAST, DEFAULT_PAPER, LIGHT } from './theme';
 	import type { Point } from './unfold';
 
@@ -14,38 +14,33 @@
 		flaps,
 		faceUp,
 		corners,
-		hint = false,
 		order,
 		onchange
 	}: {
 		result: Result;
 		flaps: number[][];
 		faceUp: number[];
-		/** Where each corner is, in board units. */
+		/** Where each corner is, fitted into the unit circle. */
 		corners: Point[];
 		/** Flap indices bottom to top. */
 		order: number[];
-		/** Nudges a corner once, to show the paper can be reshaped. */
-		hint?: boolean;
 		onchange?: (corners: Point[], order: number[]) => void;
 	} = $props();
 
-	/** The paper's middle and scale on the card, fixed so a dragged corner doesn't rescale it. */
+	/** The paper's middle and scale on the card. */
 	const CX = SIZE / 2;
 	const CY = 500;
 	const SCALE = 280;
-	/** How far from the middle a corner can be dragged, and how near a press must be to grab one. */
-	const REACH = 1.15;
-	const GRAB = 0.22;
+	/** How near a tap must land to a crease to fold it, how long the fold takes, and how long blocking flaps light up, in ms. */
+	const TAP = 0.2;
+	const SWING = 320;
+	const BLINK = 700;
 	const LINE = 48;
 	const FLAME = 46;
 	/** The grid of levels above the result line: square size, the gap between, and its baseline. */
 	const SQUARE = 26;
 	const SQUARE_GAP = 10;
 	const GRID_Y = 872;
-	const HINT_DELAY = 700;
-	const HINT_LENGTH = 1100;
-	const HINT_REACH = 0.18;
 
 	const css = getComputedStyle(document.documentElement);
 	const PAPER = {
@@ -58,12 +53,13 @@
 	let svg = $state<SVGSVGElement | undefined>(undefined);
 	let pos = $state.raw<Point[]>([]);
 	let stack = $state.raw<number[]>([]);
-	let dragging = $state<number | undefined>(undefined);
-	let hovered = $state<number | undefined>(undefined);
-	/** The flaps on the dragged corner, which flaps overlapped at the last step, and whether it moved. */
-	let moving = new Set<number>();
-	let overlapping = new Set<string>();
-	let moved = false;
+	let folding = $state(false);
+	let lit = $state<Set<number> | undefined>(undefined);
+	let unlight = 0;
+	let settling: (() => void) | undefined;
+
+	const all = $derived(creases(flaps));
+	const pulse = $derived(folding || !pos.length ? new Set<string>() : loose(all, pos, flaps, stack));
 
 	$effect.pre(() => {
 		pos = corners;
@@ -73,28 +69,9 @@
 		stack = order;
 	});
 
-	/** Pulls the corner furthest up and right toward the middle and lets it settle back. */
-	$effect(() => {
-		if (!hint || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-		let frame = 0;
-		const start = untrack(() => corners);
-		const timer = setTimeout(() => {
-			const v = start.reduce((best, p, i) => (p.x + p.y > start[best].x + start[best].y ? i : best), 0);
-			const home = start[v];
-			const begun = performance.now();
-			const step = (now: number) => {
-				if (dragging !== undefined) return;
-				const t = Math.min(1, (now - begun) / HINT_LENGTH);
-				const pull = HINT_REACH * Math.sin(Math.PI * t) ** 2;
-				pos = pos.map((q, i) => (i === v ? { x: home.x * (1 - pull), y: home.y * (1 - pull) } : q));
-				if (t < 1) frame = requestAnimationFrame(step);
-			};
-			frame = requestAnimationFrame(step);
-		}, HINT_DELAY);
-		return () => {
-			clearTimeout(timer);
-			cancelAnimationFrame(frame);
-		};
+	$effect(() => () => {
+		clearTimeout(unlight);
+		settling?.();
 	});
 
 	let scoreText = $state<SVGTextElement | undefined>(undefined);
@@ -134,37 +111,39 @@
 		return { x: (p.x - CX) / SCALE, y: (p.y + CY) / SCALE };
 	}
 
-	function onpointerdown(e: PointerEvent): void {
+	/** Folds the crease tapped, keeping the paper fitted on the card, or lights what keeps it from folding. */
+	function onpointerup(e: PointerEvent): void {
 		if (e.button > 0) return;
-		const v = nearestTo(pos, cardPoint(e), GRAB);
-		if (v === undefined) return;
-		pos = corners;
-		dragging = v;
-		moving = new Set(flaps.flatMap((f, k) => (f.includes(v) ? [k] : [])));
-		overlapping = overlaps(flaps, pos);
-		moved = false;
-		e.preventDefault();
-		svg!.setPointerCapture(e.pointerId);
+		settling?.();
+		const c = tapped(pos, flaps, stack, all, cardPoint(e), TAP);
+		if (!c) return;
+		const moving = swinger(c, all, pos, flaps, stack);
+		if (!moving) return light(blocking(c, all, pos, flaps, stack));
+		folding = true;
+		settling = play(
+			SWING,
+			c,
+			moving,
+			pos,
+			flaps,
+			stack,
+			(p, s) => ([pos, stack] = [fit(p), s]),
+			() => {
+				settling = undefined;
+				folding = false;
+				onchange?.(pos, stack);
+			}
+		);
 	}
 
-	function onpointermove(e: PointerEvent): void {
-		if (dragging === undefined) {
-			hovered = nearestTo(pos, cardPoint(e), GRAB);
-			return;
-		}
-		const p = cardPoint(e);
-		const k = Math.min(1, REACH / Math.hypot(p.x, p.y));
-		pos = pos.map((q, v) => (v === dragging ? { x: p.x * k, y: p.y * k } : q));
-		const now = overlaps(flaps, pos);
-		stack = restack(stack, moving, overlapping, now);
-		overlapping = now;
-		moved = true;
-	}
-
-	function onpointerup(): void {
-		if (dragging === undefined) return;
-		dragging = undefined;
-		if (moved) onchange?.(pos, stack);
+	/** Lights up the flaps keeping a tapped crease from folding, afresh on every tap. */
+	function light(which: number[]): void {
+		clearTimeout(unlight);
+		lit = undefined;
+		requestAnimationFrame(() => {
+			lit = new Set(which);
+			unlight = window.setTimeout(() => (lit = undefined), BLINK);
+		});
 	}
 
 	export function element(): SVGSVGElement | undefined {
@@ -175,16 +154,10 @@
 <svg
 	bind:this={svg}
 	class="card"
-	class:grab={hovered !== undefined}
-	class:grabbing={dragging !== undefined}
 	viewBox="0 0 {SIZE} {SIZE}"
 	role="img"
 	aria-label={t().cardLabel(result.date, `${runLine(result)} ${result.grid}`) + (result.streak ? `, ${t().streak(result.streak)}` : '')}
-	{onpointerdown}
-	{onpointermove}
 	{onpointerup}
-	onpointercancel={onpointerup}
-	onpointerleave={() => (hovered = undefined)}
 >
 	<defs>
 		<radialGradient id="card-spot" cx={CX} cy={CY} r={SIZE * 0.62} gradientUnits="userSpaceOnUse">
@@ -205,7 +178,16 @@
 
 	<g transform="translate({CX} {CY}) scale({SCALE})">
 		<g filter="url(#card-shadow)"><path d={silhouette} fill="#000" /></g>
-		<Paper flaps={stack.map((k) => flaps[k])} faceUp={stack.map((k) => faceUp[k])} {pos} colors={PAPER} creaseWidth={0.009} id="card" />
+		<Paper
+			flaps={stack.map((k) => flaps[k])}
+			faceUp={stack.map((k) => faceUp[k])}
+			{pos}
+			colors={PAPER}
+			creaseWidth={0.009}
+			{pulse}
+			lit={lit && new Set(stack.flatMap((k, i) => (lit!.has(k) ? [i] : [])))}
+			id="card"
+		/>
 	</g>
 
 	{#each squares as s, i (i)}
@@ -238,11 +220,5 @@
 		touch-action: none;
 		user-select: none;
 		-webkit-user-select: none;
-	}
-	.grab {
-		cursor: grab;
-	}
-	.grabbing {
-		cursor: grabbing;
 	}
 </style>

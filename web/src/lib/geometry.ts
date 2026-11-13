@@ -22,13 +22,3 @@ export function svgPoint(svg: SVGSVGElement, e: PointerEvent): Point {
 	const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(svg.getScreenCTM()!.inverse());
 	return { x: p.x, y: -p.y };
 }
-
-/** The point nearest `p` within `reach`, by index. */
-export function nearestTo(pts: Point[], p: Point, reach = Infinity): number | undefined {
-	let best: number | undefined;
-	pts.forEach((q, i) => {
-		const d = Math.hypot(q.x - p.x, q.y - p.y);
-		if (d < reach) [best, reach] = [i, d];
-	});
-	return best;
-}

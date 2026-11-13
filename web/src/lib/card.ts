@@ -58,6 +58,7 @@ export async function toPng(svg: SVGSVGElement): Promise<Blob> {
 	const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
 	style.textContent = await embeddedFonts();
 	copy.prepend(style);
+	copy.querySelectorAll('.glow, .lit').forEach((e) => e.remove());
 	copy.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
 	copy.setAttribute('width', String(SIZE));
 	copy.setAttribute('height', String(SIZE));

@@ -32,10 +32,10 @@ export const en = {
 	board: (moves: number) => `Paper: ${moves} moves`,
 	cardLabel: (date: string, score: string) => `Share card: ${date}, ${score}`,
 	help: [
-		'The paper is folded up. Drag its corners anywhere until it lies flat: no flap over another, and none turned over.',
-		'Each corner you drag somewhere new is a move. A corner tucked under the paper shows a dashed ring; drag it and it slides out from underneath. Drag anywhere off the corners to turn the whole paper over, which is free.',
+		'The paper is folded up. Tap a crease to unfold it, or fold it again, until the paper lies flat: no flap over another, and none turned over.',
+		'Each fold is a move. Creases that can fold right now glow. A crease can only fold once nothing lies on the side that swings; tap one that\'s stuck and whatever is in the way lights up. Drag anywhere to turn the paper over, which is free.',
 		'Each day is one run of levels that get harder. "Solvable in 4" is the fewest moves a level takes, and the run has 10 extra moves to spend. Go over, finish that level, and the run is done. A new one comes tomorrow.',
-		'Replay any level you reached with ‹ ›, and share any you solved; drag the card\'s corners to fold the paper into a shape of your own first. The fire counts the days in a row you finished a run.'
+		'Replay any level you reached with ‹ ›, and share any you solved; tap the card\'s creases to fold the paper into a shape of your own first. The fire counts the days in a row you finished a run.'
 	],
 	keys: {
 		levels: 'previous, next level',

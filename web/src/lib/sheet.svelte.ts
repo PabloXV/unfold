@@ -1,9 +1,9 @@
 import { type Crease, creases, crumple, lopsided } from './fold';
-import { circle, flat } from './free';
+import { flat } from './free';
 import { points, turn } from './geometry';
 import { Attempt, type Point } from './unfold';
 
-/** One go at a level: the folded paper, its corners dragged anywhere until it lies flat. */
+/** One go at a level: the folded paper, unfolded a crease at a time until it lies flat. */
 export class Sheet {
 	readonly seed: number;
 	readonly level: number;
@@ -14,10 +14,9 @@ export class Sheet {
 	readonly par: number;
 	/** Per flap, the sign of its area on the flat sheet; drawn the other way round, it shows its back. */
 	readonly faceUp: number[];
-	/** The flat sheet fitted into the unit circle, the way it was drawn. */
+	/** The flat sheet, its flaps made lopsided, fitted into the unit circle. */
 	readonly upright: Point[];
-	/** With folding, the creases the paper can fold along; without, corners drag anywhere. */
-	readonly creases?: Crease[];
+	readonly creases: Crease[];
 
 	pos = $state.raw<Point[]>([]);
 	/** Flaps bottom to top. */
@@ -28,26 +27,20 @@ export class Sheet {
 	/** Moves made before this go began, which still count. */
 	#before: number;
 
-	constructor(seed: number, level: number, before = 0, folding = false) {
+	constructor(seed: number, level: number, before = 0) {
 		const a = new Attempt(seed, level);
 		this.seed = seed;
 		this.level = level;
 		this.code = a.code;
 		this.dots = a.dots;
 		this.flaps = groups(a.flaps(), 3);
-		let par = a.par;
 		const shape = points(a.shape());
 		this.faceUp = this.flaps.map((f) => Math.sign(turn(f.map((v) => shape[v]))));
-		this.upright = points(a.upright());
-		this.pos = circle(Array.from(a.slots()));
+		this.upright = lopsided(points(a.upright()), this.flaps, this.faceUp, seed, level);
 		a.free();
-		this.stack = this.flaps.map((_, k) => k);
-		if (folding) {
-			this.creases = creases(this.flaps);
-			const start = crumple(lopsided(this.upright, this.flaps, this.faceUp, seed, level), this.flaps, this.creases, seed, level);
-			[this.pos, this.stack, par] = [start.pos, start.stack, start.par];
-		}
-		this.par = par;
+		this.creases = creases(this.flaps);
+		const start = crumple(this.upright, this.flaps, this.creases, seed, level);
+		[this.pos, this.stack, this.par] = [start.pos, start.stack, start.par];
 		this.#before = before;
 		this.moves = before;
 	}
@@ -57,7 +50,7 @@ export class Sheet {
 		return !this.solved && this.moves > this.#before;
 	}
 
-	/** Checks, once a moved corner has settled, whether the paper now lies flat. */
+	/** Checks, once a fold has settled, whether the paper now lies flat. */
 	settled(): void {
 		this.solved = flat(this.flaps, this.faceUp, this.pos);
 	}

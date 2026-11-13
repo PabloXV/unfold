@@ -139,6 +139,34 @@ export function swinger(c: Crease, all: Crease[], pos: Point[], flaps: number[][
 	return [small, large].find((side) => inWay(c, all, pos, flaps, stack, side).length === 0);
 }
 
+/** The creases that can fold now, as "low,high" corners. */
+export function loose(all: Crease[], pos: Point[], flaps: number[][], stack: number[]): Set<string> {
+	return new Set(all.filter((c) => swinger(c, all, pos, flaps, stack)).map((c) => (c.a < c.b ? `${c.a},${c.b}` : `${c.b},${c.a}`)));
+}
+
+/** Plays a fold over `ms`, handing `show` the paper folded that far each frame; returns a way to finish it at once. */
+export function play(ms: number, c: Crease, moving: number[], pos: Point[], flaps: number[][], stack: number[], show: (pos: Point[], stack: number[]) => void, done: () => void): () => void {
+	const begin = performance.now();
+	let raf = 0;
+	const at = (k: number) => {
+		const s = Math.cos(Math.PI * k);
+		show(fold(pos, flaps, c, moving, s), restack(stack, moving, s));
+	};
+	const finish = () => {
+		cancelAnimationFrame(raf);
+		at(1);
+		done();
+	};
+	const tick = (now: number) => {
+		const k = Math.min(1, (now - begin) / ms);
+		if (k === 1) return finish();
+		at(k);
+		raf = requestAnimationFrame(tick);
+	};
+	raf = requestAnimationFrame(tick);
+	return finish;
+}
+
 /** The most flaps a scrambling fold swings, as an origami folder folds flaps rather than halves of the sheet. */
 const FLAP = 3;
 /** The most earlier folds one scrambling fold may cover, so that most levels unfold in more than one order. */

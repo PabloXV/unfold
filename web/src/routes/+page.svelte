@@ -3,7 +3,7 @@
 	import { fly } from 'svelte/transition';
 	import { cubicIn, cubicOut } from 'svelte/easing';
 	import { replaceState } from '$app/navigation';
-	import FreeBoard from '#lib/FreeBoard.svelte';
+	import Board from '#lib/Board.svelte';
 	import Card from '#lib/Card.svelte';
 	import Icon from '#lib/Icon.svelte';
 	import { Sheet } from '#lib/sheet.svelte.ts';
@@ -27,7 +27,6 @@
 	const SLIDE_OUT = 240;
 	const SLIDE_IN = 380;
 	const SLIDE_GAP = 130;
-	const RESHAPED_KEY = 'unfold:reshaped';
 	const BACKDROPS = { light: [LIGHT.bg, LIGHT.spot], dark: [DARK.bg, DARK.spot] };
 
 	let game = $state.raw<Sheet | undefined>(undefined);
@@ -80,9 +79,9 @@
 	type Solved = { corners: Point[]; order: number[] };
 
 	const here = () => location.origin + location.pathname;
-	const shapeKey = (level: number) => `unfold:shape:${day}:${level}`;
+	const shapeKey = (level: number) => `unfold:folded:${day}:${level}`;
 	const solvedKey = (level: number) => `unfold:solved:${day}:${level}`;
-	const orderKey = (level: number) => `unfold:order:${day}:${level}`;
+	const orderKey = (level: number) => `unfold:folded-order:${day}:${level}`;
 
 	onMount(() => {
 		loadCore().then(
@@ -217,7 +216,6 @@
 		corners = next;
 		order = stack;
 		reshaped = true;
-		writeJson(RESHAPED_KEY, true);
 		writeJson(shapeKey(cardShape!.level), round(next));
 		writeJson(orderKey(cardShape!.level), stack);
 	}
@@ -339,7 +337,7 @@
 		{#if game}
 			{#key game}
 				<div class="slide" in:fly={{ x: `${slide * 70}%`, opacity: 0, duration: SLIDE_IN, delay: SLIDE_GAP, easing: cubicOut }} out:fly={{ x: `${-slide * 70}%`, opacity: 0, duration: SLIDE_OUT, easing: cubicIn }}>
-					<FreeBoard sheet={game} />
+					<Board sheet={game} />
 				</div>
 			{/key}
 		{:else if failed}
@@ -418,7 +416,6 @@
 					faceUp={cardShape.faceUp}
 					{corners}
 					{order}
-					hint={!readJson<boolean>(RESHAPED_KEY)}
 					onchange={saveShape}
 				/>
 				<div class="bar" role="toolbar" aria-label={t().cardTools} style:background={CARD_BAR}>
