@@ -1,3 +1,4 @@
+import { type Crease, creases, crumple } from './fold';
 import { circle, flat } from './free';
 import { points, turn } from './geometry';
 import { Attempt, type Point } from './unfold';
@@ -15,6 +16,8 @@ export class Sheet {
 	readonly faceUp: number[];
 	/** The flat sheet fitted into the unit circle, the way it was drawn. */
 	readonly upright: Point[];
+	/** With folding, the creases the paper can fold along; without, corners drag anywhere. */
+	readonly creases?: Crease[];
 
 	pos = $state.raw<Point[]>([]);
 	/** Flaps bottom to top. */
@@ -25,20 +28,26 @@ export class Sheet {
 	/** Moves made before this go began, which still count. */
 	#before: number;
 
-	constructor(seed: number, level: number, before = 0) {
+	constructor(seed: number, level: number, before = 0, folding = false) {
 		const a = new Attempt(seed, level);
 		this.seed = seed;
 		this.level = level;
 		this.code = a.code;
 		this.dots = a.dots;
 		this.flaps = groups(a.flaps(), 3);
-		this.par = a.par;
+		let par = a.par;
 		const shape = points(a.shape());
 		this.faceUp = this.flaps.map((f) => Math.sign(turn(f.map((v) => shape[v]))));
 		this.upright = points(a.upright());
 		this.pos = circle(Array.from(a.slots()));
 		a.free();
 		this.stack = this.flaps.map((_, k) => k);
+		if (folding) {
+			this.creases = creases(this.flaps);
+			const start = crumple(this.upright, this.flaps, this.creases, seed, level);
+			[this.pos, this.stack, par] = [start.pos, start.stack, start.par];
+		}
+		this.par = par;
 		this.#before = before;
 		this.moves = before;
 	}

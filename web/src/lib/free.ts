@@ -16,7 +16,7 @@ export function circle(slots: number[]): Point[] {
 	return slots.map((s) => ({ x: Math.cos((2 * Math.PI * s) / slots.length), y: Math.sin((2 * Math.PI * s) / slots.length) }));
 }
 
-function inside([a, b, c]: Point[], p: Point): boolean {
+export function inside([a, b, c]: Point[], p: Point): boolean {
 	const s = [turn([a, b, p]), turn([b, c, p]), turn([c, a, p])];
 	return s.every((d) => d > 1e-9) || s.every((d) => d < -1e-9);
 }

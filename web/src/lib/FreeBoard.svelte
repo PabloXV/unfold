@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { REACH, buried, rest, squeeze, width } from './free';
+	import { type Crease, aim, fold, restack as foldOver, side } from './fold';
+	import { REACH, buried, inside, rest, squeeze, width } from './free';
 	import { nearestTo, svgPoint } from './geometry';
 	import { t } from './i18n/index.svelte';
 	import Paper from './Paper.svelte';
@@ -22,10 +23,13 @@
 	/** How far out the paper's widest side may reach before the view shrinks, and how quickly the view follows, in s. */
 	const FIT = 1;
 	const FOLLOW = 0.12;
+	/** How much nearer another crease must bring the corner to the finger before a fold switches to it. */
+	const STICK = 0.7;
 
 	let svg = $state<SVGSVGElement | undefined>(undefined);
 	let drag = $state<{ v: number; from: Point; was: Point; started: boolean } | undefined>(undefined);
 	let turning = $state<{ from: Point; base: Point[]; under: number[]; dir: Point; t: number; falling?: boolean } | undefined>(undefined);
+	let folding = $state<{ v: number; from: Point; base: Point[]; under: number[]; c?: Crease; moving: number[]; s: number } | undefined>(undefined);
 	let settling: (() => void) | undefined;
 	let raf = 0;
 	let view = $state.raw(framing());
@@ -36,7 +40,7 @@
 	const toScreen = (p: Point) => ({ x: (p.x - view.x) * view.s, y: (p.y - view.y) * view.s });
 	const toWorld = (p: Point) => ({ x: p.x / view.s + view.x, y: p.y / view.s + view.y });
 	const shown = $derived(sheet.pos.map(toScreen));
-	const hidden = $derived(!sheet.solved && !turning ? buried(sheet.stack, sheet.flaps, sheet.pos) : []);
+	const hidden = $derived(!sheet.solved && !turning && !folding ? buried(sheet.stack, sheet.flaps, sheet.pos) : []);
 
 	onMount(() => {
 		let last = 0;
@@ -59,9 +63,9 @@
 		return { x: (x0 + x1) / 2, y: (y0 + y1) / 2, s: Math.min(1, (2 * FIT) / Math.max(x1 - x0, y1 - y0)) };
 	}
 
-	/** Eases the view toward the framing: held still mid-turn, and not zooming mid-drag, where it would run away. */
+	/** Eases the view toward the framing: held still mid-turn and mid-fold, and not zooming mid-drag, where it would run away. */
 	function reframe(dt: number): void {
-		if (turning) return;
+		if (turning || folding) return;
 		const want = framing();
 		if (drag?.started) want.s = view.s;
 		const k = 1 - Math.exp(-dt / FOLLOW);
@@ -92,12 +96,43 @@
 		if (sheet.solved) return;
 		e.preventDefault();
 		svg!.setPointerCapture(e.pointerId);
-		const v = nearestTo(shown, svgPoint(svg!, e), GRAB);
+		const p = svgPoint(svg!, e);
+		const v = nearestTo(shown, p, GRAB) ?? (sheet.creases ? pinched(p) : undefined);
 		if (v === undefined) {
-			turning = { from: svgPoint(svg!, e), base: sheet.pos, under: sheet.stack, dir: { x: 1, y: 0 }, t: 0 };
+			turning = { from: p, base: sheet.pos, under: sheet.stack, dir: { x: 1, y: 0 }, t: 0 };
+			return;
+		}
+		if (sheet.creases) {
+			folding = { v, from: p, base: sheet.pos, under: sheet.stack, moving: [], s: 1 };
 			return;
 		}
 		drag = { v, from: shown[v], was: sheet.pos[v], started: false };
+	}
+
+	/** On the paper, the nearest corner of the top flap under the press; off it, none, so the press turns the paper. */
+	function pinched(at: Point): number | undefined {
+		const p = toWorld(at);
+		const top = sheet.stack.findLast((k) => inside(sheet.flaps[k].map((w) => sheet.pos[w]), p));
+		if (top === undefined) return;
+		const f = sheet.flaps[top];
+		return f[nearestTo(f.map((w) => shown[w]), at)!];
+	}
+
+	/** Folds the side of whichever crease brings the held corner nearest the finger, sticking with the current one unless another is clearly nearer. */
+	function bendTo(to: Point): void {
+		const held = folding!;
+		let best: { c: Crease; moving: number[]; s: number; miss: number } | undefined;
+		for (const c of sheet.creases!) {
+			const moving = side(c, sheet.flaps, held.v);
+			if (!moving) continue;
+			const { s, miss } = aim(held.base, c, held.v, to);
+			const weighed = c === held.c ? miss * STICK : miss;
+			if (!best || weighed < best.miss) best = { c, moving, s, miss: weighed };
+		}
+		if (!best) return;
+		Object.assign(held, { c: best.c, moving: best.moving, s: best.s });
+		sheet.pos = fold(held.base, sheet.flaps, best.c, best.moving, best.s);
+		sheet.stack = foldOver(held.under, best.moving, best.s);
 	}
 
 	/** Notes which flaps move with the corner; they keep their layer and slide out from under whatever covers them. */
@@ -106,10 +141,10 @@
 		overlapping = overlaps(sheet.flaps, sheet.pos);
 	}
 
-	/** Eases a dropped corner to where it settles, then checks for flat; a new press finishes it at once. */
-	function settle(v: number, to: Point): void {
-		const from = sheet.pos[v];
-		const place = (k: number) => (sheet.pos = sheet.pos.map((q, w) => (w === v ? { x: from.x + (to.x - from.x) * k, y: from.y + (to.y - from.y) * k } : q)));
+	/** Eases the corners to where they settle, then checks for flat; a new press finishes it at once. */
+	function settle(to: Point[]): void {
+		const from = sheet.pos;
+		const place = (k: number) => (sheet.pos = from.map((q, w) => ({ x: q.x + (to[w].x - q.x) * k, y: q.y + (to[w].y - q.y) * k })));
 		const begin = performance.now();
 		const finish = () => {
 			cancelAnimationFrame(raf);
@@ -146,6 +181,11 @@
 			show(Math.min(1, len / (width(turning.base, turning.dir) * view.s)));
 			return;
 		}
+		if (folding) {
+			const p = svgPoint(svg!, e);
+			if (folding.c || Math.hypot(p.x - folding.from.x, p.y - folding.from.y) >= NUDGE) bendTo(toWorld(p));
+			return;
+		}
 		if (!drag) return;
 		finger = at(e);
 		if (!drag.started) {
@@ -174,12 +214,23 @@
 
 	function onpointerup(): void {
 		if (turning) return letGo();
+		if (folding) return drop();
 		if (!drag) return;
 		const { v, was, started } = drag;
 		drag = undefined;
 		if (!started) return;
 		sheet.moves++;
-		settle(v, rest(sheet.pos, sheet.flaps, v, was, SPACE / view.s, THIN / view.s));
+		const to = rest(sheet.pos, sheet.flaps, v, was, SPACE / view.s, THIN / view.s);
+		settle(sheet.pos.map((q, w) => (w === v ? to : q)));
+	}
+
+	/** Lets go of a fold: finished, and counted, once past upright, else eased back open. */
+	function drop(): void {
+		const { c, moving, s, base } = folding!;
+		folding = undefined;
+		if (!c) return;
+		if (s < 0) sheet.moves++;
+		settle(fold(base, sheet.flaps, c, moving, s < 0 ? -1 : 1));
 	}
 </script>
 
@@ -187,7 +238,7 @@
 	<svg
 		bind:this={svg}
 		viewBox="-1.25 -1.25 2.5 2.5"
-		class:dragging={drag || turning}
+		class:dragging={drag || turning || folding}
 		role="application"
 		aria-label={t().board(sheet.moves)}
 		{onpointerdown}
