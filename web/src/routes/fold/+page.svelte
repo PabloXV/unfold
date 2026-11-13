@@ -46,7 +46,7 @@
 			<button class="icon" onclick={() => (sheet = new Sheet(seed, sheet!.level, 0, true))} aria-label="Restart"><Icon name="reset" /></button>
 			<button onclick={() => load(sheet!.level + 1)} aria-label="Next level">›</button>
 		</nav>
-		<p class="how">Drag a corner to fold the paper along a crease, everything on its side coming along. Fold it until it lies flat. Drag off the paper to turn it over.</p>
+		<p class="how">Tap a crease to fold or unfold it, the smaller side swinging over. Fold it until it lies flat. Drag anywhere to turn it over.</p>
 	{/if}
 </main>
 

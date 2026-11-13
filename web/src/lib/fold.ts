@@ -1,3 +1,4 @@
+import { inside } from './free';
 import type { Point } from './unfold';
 
 /** A crease shared by two flaps, and the flaps on each side of it, which it cuts the paper into. */
@@ -43,12 +44,6 @@ export function creases(flaps: number[][]): Crease[] {
 	return out;
 }
 
-/** The flaps on corner `v`'s side of a crease, none if `v` is on the crease. */
-export function side(c: Crease, flaps: number[][], v: number): number[] | undefined {
-	if (v === c.a || v === c.b) return;
-	return c.sides.find((s) => s.some((k) => flaps[k].includes(v)));
-}
-
 /** Where a corner lands folded `s` of the way: 1 where it is, -1 mirrored over the crease, between tilted toward it. */
 function bend(p: Point, a: Point, b: Point, s: number): Point {
 	const [dx, dy] = [b.x - a.x, b.y - a.y];
@@ -69,15 +64,25 @@ export function restack(stack: number[], moving: number[], s: number): number[] 
 	return [...stack.filter((k) => !moving.includes(k)), ...stack.filter((k) => moving.includes(k)).reverse()];
 }
 
-/** How far over a crease to fold so corner `v` comes closest to `to`, and how far it stays from it. */
-export function aim(pos: Point[], c: Crease, v: number, to: Point): { s: number; miss: number } {
-	const [a, b, p] = [pos[c.a], pos[c.b], pos[v]];
-	const foot = bend(p, a, b, 0);
-	const n = { x: p.x - foot.x, y: p.y - foot.y };
-	const len2 = n.x * n.x + n.y * n.y;
-	if (len2 < 1e-9) return { s: 1, miss: Infinity };
-	const s = Math.max(-1, Math.min(1, ((to.x - foot.x) * n.x + (to.y - foot.y) * n.y) / len2));
-	return { s, miss: Math.hypot(to.x - foot.x - n.x * s, to.y - foot.y - n.y * s) };
+/** How far a point lies from a segment. */
+function away(p: Point, a: Point, b: Point): number {
+	const [dx, dy] = [b.x - a.x, b.y - a.y];
+	const k = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
+	return Math.hypot(p.x - a.x - dx * k, p.y - a.y - dy * k);
+}
+
+/** The crease a tap at `p` means: the nearest within `reach` on any flap from the top down to the first one the tap lands inside. */
+export function tapped(pos: Point[], flaps: number[][], stack: number[], all: Crease[], p: Point, reach: number): Crease | undefined {
+	let best: { c: Crease; d: number } | undefined;
+	for (const k of [...stack].reverse()) {
+		const f = flaps[k];
+		for (const c of all) {
+			const d = away(p, pos[c.a], pos[c.b]);
+			if (f.includes(c.a) && f.includes(c.b) && d < reach && (!best || d < best.d)) best = { c, d };
+		}
+		if (inside(f.map((w) => pos[w]), p)) break;
+	}
+	return best?.c;
 }
 
 /** The flat sheet folded over `k` different creases. A fold only flips its crease, so folding a crease twice undoes it
