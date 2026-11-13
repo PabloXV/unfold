@@ -14,7 +14,7 @@
 		colors,
 		depth = false,
 		creaseWidth,
-		pulse = false,
+		pulse,
 		id
 	}: {
 		/** Vertex triples, bottom to top. */
@@ -27,8 +27,8 @@
 		depth?: boolean;
 		/** Crease width in board units, scaling with the sheet; one screen pixel without. */
 		creaseWidth?: number;
-		/** Lays a glow along each crease, light around a dark core, that strengthens and fades to show it can be folded. */
-		pulse?: boolean;
+		/** Creases, as "low,high" corners, that can fold now: each gets a glow, light around a dark core, that strengthens and fades. */
+		pulse?: Set<string>;
 		/** Unique per sheet on the page, for its clip paths. */
 		id: string;
 	} = $props();
@@ -109,7 +109,7 @@
 		{#each folds[k] as fold (`${fold.a},${fold.b}`)}
 			{@const c = crease(fold)}
 			{#if pulse}
-				<g class="glow">
+				<g class="glow" class:still={!pulse.has(`${fold.a},${fold.b}`)}>
 					<line class="halo" x1={c.x1} y1={c.y1} x2={c.x2} y2={c.y2} />
 					<line class="core" x1={c.x1} y1={c.y1} x2={c.x2} y2={c.y2} />
 				</g>
@@ -142,6 +142,9 @@
 	.glow {
 		opacity: 0.2;
 		animation: glow 1.5s ease-in-out infinite;
+	}
+	.still {
+		visibility: hidden;
 	}
 	.glow line {
 		stroke-linecap: round;

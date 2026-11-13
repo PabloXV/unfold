@@ -1,4 +1,4 @@
-import { type Crease, creases, crumple } from './fold';
+import { type Crease, creases, crumple, lopsided } from './fold';
 import { circle, flat } from './free';
 import { points, turn } from './geometry';
 import { Attempt, type Point } from './unfold';
@@ -44,7 +44,7 @@ export class Sheet {
 		this.stack = this.flaps.map((_, k) => k);
 		if (folding) {
 			this.creases = creases(this.flaps);
-			const start = crumple(this.upright, this.flaps, this.creases, seed, level);
+			const start = crumple(lopsided(this.upright, this.flaps, this.faceUp, seed, level), this.flaps, this.creases, seed, level);
 			[this.pos, this.stack, par] = [start.pos, start.stack, start.par];
 		}
 		this.par = par;

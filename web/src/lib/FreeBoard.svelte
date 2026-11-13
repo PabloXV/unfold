@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { type Crease, fold, restack as foldOver, tapped } from './fold';
+	import { type Crease, fold, restack as foldOver, swinger, tapped } from './fold';
 	import { REACH, buried, rest, squeeze, width } from './free';
 	import { nearestTo, svgPoint } from './geometry';
 	import { t } from './i18n/index.svelte';
@@ -41,6 +41,11 @@
 	const toScreen = (p: Point) => ({ x: (p.x - view.x) * view.s, y: (p.y - view.y) * view.s });
 	const toWorld = (p: Point) => ({ x: p.x / view.s + view.x, y: p.y / view.s + view.y });
 	const shown = $derived(sheet.pos.map(toScreen));
+	const loose = $derived(
+		sheet.creases && !sheet.solved && !turning && !folding
+			? new Set(sheet.creases.filter((c) => swinger(c, sheet.pos, sheet.flaps, sheet.stack)).map((c) => (c.a < c.b ? `${c.a},${c.b}` : `${c.b},${c.a}`)))
+			: sheet.creases && new Set<string>(),
+	);
 	const hidden = $derived(!sheet.solved && !sheet.creases && !turning && !folding ? buried(sheet.stack, sheet.flaps, sheet.pos) : []);
 
 	onMount(() => {
@@ -141,9 +146,10 @@
 		});
 	}
 
-	/** Folds or unfolds a crease, its smaller side swinging up and over the rest. */
+	/** Folds or unfolds a crease, its smaller side swinging up and over the rest, or its larger if paper lies on the smaller; with paper on both, nothing. */
 	function swing(c: Crease): void {
-		const moving = c.sides[0].length <= c.sides[1].length ? c.sides[0] : c.sides[1];
+		const moving = swinger(c, sheet.pos, sheet.flaps, sheet.stack);
+		if (!moving) return;
 		const [base, under] = [sheet.pos, sheet.stack];
 		sheet.moves++;
 		folding = true;
@@ -239,7 +245,7 @@
 		onpointercancel={onpointerup}
 	>
 		<g class="paper">
-			<Paper flaps={sheet.stack.map((k) => sheet.flaps[k])} faceUp={sheet.stack.map((k) => sheet.faceUp[k])} pos={shown} colors={PAPER} depth={!sheet.solved} pulse={!!sheet.creases && !sheet.solved} id="board" />
+			<Paper flaps={sheet.stack.map((k) => sheet.flaps[k])} faceUp={sheet.stack.map((k) => sheet.faceUp[k])} pos={shown} colors={PAPER} depth={!sheet.solved} pulse={loose} id="board" />
 		</g>
 		{#each hidden as v (v)}
 			<circle class="hidden" cx={shown[v].x} cy={-shown[v].y} r="0.045" />
