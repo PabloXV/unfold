@@ -35,7 +35,7 @@ export const en = {
 	cardLabel: (date: string, score: string) => `Share card: ${date}, ${score}`,
 	help: [
 		'Tap creases to unfold the paper until it lies flat: no flap over another, none turned over.',
-		'Each fold is a move. Glowing creases can fold now; tap a stuck one to see what\'s in the way. Some flaps are folded behind: drag to turn the paper over, for free.',
+		'Each fold is a move. Glowing creases can fold now; tap a stuck one to see what\'s in the way. Drag to turn the paper over, for free.',
 		`One run a day, each level harder. "Solvable in 4" is the fewest moves; the run has ${BUDGET} extra to spend. Go over and the run ends with that level.`,
 		'Replay levels with ‹ ›. Share any you solved, folding the card into your own shape first. The fire is your streak.'
 	],

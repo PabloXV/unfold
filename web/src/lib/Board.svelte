@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Blink } from './blink.svelte';
-	import { type Crease, loose, play, tap } from './fold';
+	import { type Crease, type Swing, loose, play, tap } from './fold';
 	import { squeeze, svgPoint, width } from './geometry';
 	import { t } from './i18n/index.svelte';
 	import Paper from './Paper.svelte';
@@ -122,14 +122,14 @@
 		turning = { from: svgPoint(svg!, e), base: sheet.pos, under: sheet.stack, dir: { x: 1, y: 0 }, t: 0 };
 	}
 
-	/** Folds or unfolds a crease, its smaller side swinging up and over the rest, or its larger if the smaller can't. */
-	function swing(c: Crease, moving: number[]): void {
+	/** Folds or unfolds a crease, its smaller side swinging over the rest, or under it. */
+	function swing(c: Crease, how: Swing): void {
 		sheet.moves++;
 		folding = true;
 		settling = play(
 			SWING,
 			c,
-			moving,
+			how,
 			sheet.pos,
 			sheet.flaps,
 			sheet.stack,
@@ -189,7 +189,7 @@
 		wait();
 		const did = tap(at, TAP / view.s, sheet.creases, sheet.pos, sheet.flaps, sheet.stack);
 		if (did && 'inWay' in did) blink.show(did.inWay);
-		else if (did) swing(did.c, did.moving);
+		else if (did) swing(did.c, did.swing);
 	}
 </script>
 

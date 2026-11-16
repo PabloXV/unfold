@@ -64,10 +64,19 @@ export function fold(pos: Point[], flaps: number[][], c: Crease, moving: number[
 	return pos.map((p, w) => (corners.has(w) && w !== c.a && w !== c.b ? bend(p, pos[c.a], pos[c.b], s) : p));
 }
 
-/** The stack once the moving flaps pass over: they land on top, turned over, so their own order reverses. */
-function restack(stack: number[], moving: number[], s: number): number[] {
+/** A fold as tapped: the flaps that swing, and whether they swing away, under the paper, rather than up over it. */
+export type Swing = { moving: number[]; under: boolean };
+
+/** The stack once the moving flaps pass over, or under: they land on top, or beneath, turned over, their own order reversed. */
+function restack(stack: number[], moving: number[], s: number, under = false): number[] {
 	if (s >= 0) return stack;
+	if (under) return restack([...stack].reverse(), moving, s).reverse();
 	return [...stack.filter((k) => !moving.includes(k)), ...stack.filter((k) => moving.includes(k)).reverse()];
+}
+
+/** The paper and its stack with a swing done `s` of the way: 1 not at all, -1 fully. */
+function swung(pos: Point[], flaps: number[][], stack: number[], c: Crease, { moving, under }: Swing, s = -1): [Point[], number[]] {
+	return [fold(pos, flaps, c, moving, s), restack(stack, moving, s, under)];
 }
 
 /** How far a point lies from a segment. */
@@ -77,12 +86,12 @@ function away(p: Point, a: Point, b: Point): number {
 	return Math.hypot(p.x - a.x - dx * k, p.y - a.y - dy * k);
 }
 
-/** What a tap at `p` does: folds a crease, swinging `moving`, or lights `inWay`, what keeps it from folding; or nothing. */
-export function tap(p: Point, reach: number, all: Crease[], pos: Point[], flaps: number[][], stack: number[]): { c: Crease; moving: number[] } | { inWay: number[] } | undefined {
+/** What a tap at `p` does: folds a crease with `swing`, or lights `inWay`, what keeps it from folding; or nothing. */
+export function tap(p: Point, reach: number, all: Crease[], pos: Point[], flaps: number[][], stack: number[]): { c: Crease; swing: Swing } | { inWay: number[] } | undefined {
 	const c = tapped(pos, flaps, stack, all, p, reach);
 	if (!c) return;
-	const moving = swinger(c, all, pos, flaps, stack);
-	return moving ? { c, moving } : { inWay: blocking(c, all, pos, flaps, stack) };
+	const swing = swinger(c, all, pos, flaps, stack);
+	return swing ? { c, swing } : { inWay: blocking(c, all, pos, flaps, stack) };
 }
 
 /** The crease a tap at `p` means: the nearest within `reach` on any flap from the top down to the first one the tap lands inside. */
@@ -139,16 +148,18 @@ function inWay(c: Crease, all: Crease[], pos: Point[], flaps: number[][], stack:
 	return on.length ? on : through(fold(pos, flaps, c, moving, -1), flaps, restack(stack, moving, -1), all);
 }
 
-/** What keeps a crease from folding: the fewer of the flaps in the way of either side. */
+const smaller = (c: Crease) => (c.sides[0].length <= c.sides[1].length ? c.sides[0] : c.sides[1]);
+
+/** What keeps a crease from folding toward the viewer, the way that can be seen. */
 function blocking(c: Crease, all: Crease[], pos: Point[], flaps: number[][], stack: number[]): number[] {
-	const [x, y] = c.sides.map((side) => inWay(c, all, pos, flaps, stack, side));
-	return x.length <= y.length ? x : y;
+	return inWay(c, all, pos, flaps, stack, smaller(c));
 }
 
-/** The side of a crease that swings when tapped: the smaller if nothing is in its way, else the larger, else none. */
-export function swinger(c: Crease, all: Crease[], pos: Point[], flaps: number[][], stack: number[]): number[] | undefined {
-	const [small] = c.sides[0].length <= c.sides[1].length ? c.sides : [c.sides[1], c.sides[0]];
-	return inWay(c, all, pos, flaps, stack, small).length ? undefined : small;
+/** How a tap folds a crease: its smaller side swings up over the paper if nothing is in the way, else under it, else not at all. */
+export function swinger(c: Crease, all: Crease[], pos: Point[], flaps: number[][], stack: number[]): Swing | undefined {
+	const moving = smaller(c);
+	if (!inWay(c, all, pos, flaps, stack, moving).length) return { moving, under: false };
+	if (!inWay(c, all, pos, flaps, [...stack].reverse(), moving).length) return { moving, under: true };
 }
 
 /** The creases that can fold now, as "low,high" corners. */
@@ -157,13 +168,10 @@ export function loose(all: Crease[], pos: Point[], flaps: number[][], stack: num
 }
 
 /** Plays a fold over `ms`, handing `show` the paper folded that far each frame; returns a way to finish it at once. */
-export function play(ms: number, c: Crease, moving: number[], pos: Point[], flaps: number[][], stack: number[], show: (pos: Point[], stack: number[]) => void, done: () => void): () => void {
+export function play(ms: number, c: Crease, swing: Swing, pos: Point[], flaps: number[][], stack: number[], show: (pos: Point[], stack: number[]) => void, done: () => void): () => void {
 	const begin = performance.now();
 	let raf = 0;
-	const at = (k: number) => {
-		const s = Math.cos(Math.PI * k);
-		show(fold(pos, flaps, c, moving, s), restack(stack, moving, s));
-	};
+	const at = (k: number) => show(...swung(pos, flaps, stack, c, swing, Math.cos(Math.PI * k)));
 	const finish = () => {
 		cancelAnimationFrame(raf);
 		at(1);
@@ -179,18 +187,14 @@ export function play(ms: number, c: Crease, moving: number[], pos: Point[], flap
 	return finish;
 }
 
-/** Whether a crease can fold from one side of the paper or the other, turning it over being free. */
-const either = (c: Crease, all: Crease[], pos: Point[], flaps: number[][], stack: number[]) =>
-	!!swinger(c, all, pos, flaps, stack) || !!swinger(c, all, pos, flaps, [...stack].reverse());
-
-/** Earlier folds a player could undo too soon: free to unfold now, from either side, but pinning crease `c` from both if they are. */
+/** Earlier folds a player could undo too soon: free to unfold now, but pinning crease `c` both ways if they are. */
 function traps(c: Crease, earlier: Crease[], all: Crease[], pos: Point[], flaps: number[][], stack: number[]): number {
-	return earlier.filter((x) =>
-		[stack, [...stack].reverse()].some((s) => {
-			const moving = swinger(x, all, pos, flaps, s);
-			return moving && !either(c, all, fold(pos, flaps, x, moving, -1), flaps, restack(s, moving, -1));
-		})
-	).length;
+	return earlier.filter((x) => {
+		const swing = swinger(x, all, pos, flaps, stack);
+		if (!swing) return false;
+		const [p, s] = swung(pos, flaps, stack, x, swing);
+		return !swinger(c, all, p, flaps, s);
+	}).length;
 }
 
 /** The paper turned over: mirrored, its stack upside down. */
@@ -208,7 +212,7 @@ export function crumple(sheet: Point[], flaps: number[][], all: Crease[], seed: 
 	let pos = sheet;
 	let stack = flaps.map((_, i) => i);
 	const used: Crease[] = [];
-	const unburied = (p: Point[], s: number[]) => used.filter((c) => either(c, all, p, flaps, s)).length;
+	const unburied = (p: Point[], s: number[]) => used.filter((c) => swinger(c, all, p, flaps, s)).length;
 	for (let i = Math.min(all.length, 1 + Math.floor(level / 2)); i > 0; i--) {
 		if (rnd() < 0.5) [pos, stack] = turned(pos, stack);
 		const before = unburied(pos, stack);
@@ -218,7 +222,7 @@ export function crumple(sheet: Point[], flaps: number[][], all: Crease[], seed: 
 				: c.sides.flatMap((side) => {
 						if (inWay(c, all, pos, flaps, stack, side).length) return [];
 						const [p, s] = [fold(pos, flaps, c, side, -1), restack(stack, side, -1)];
-						if (swinger(c, all, p, flaps, s) !== side) return [];
+						if (swinger(c, all, p, flaps, s)?.moving !== side) return [];
 						return [{ c, p, s, big: side.length > FLAP, buries: before - unburied(p, s), traps: traps(c, used, all, p, flaps, s) }];
 					}),
 		);

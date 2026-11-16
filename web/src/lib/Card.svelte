@@ -120,7 +120,7 @@
 		settling = play(
 			SWING,
 			did.c,
-			did.moving,
+			did.swing,
 			pos,
 			flaps,
 			stack,
