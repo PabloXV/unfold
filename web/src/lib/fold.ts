@@ -5,7 +5,7 @@ import type { Point } from './unfold';
 export type Crease = { a: number; b: number; hinge: [number, number]; sides: [number[], number[]] };
 
 /** A seeded generator, so a seed and level always fold the same way. */
-function random(seed: number): () => number {
+export function random(seed: number): () => number {
 	let s = seed >>> 0;
 	return () => {
 		s = (s + 0x6d2b79f5) >>> 0;
@@ -75,7 +75,7 @@ function restack(stack: number[], moving: number[], s: number, under = false): n
 }
 
 /** The paper and its stack with a swing done `s` of the way: 1 not at all, -1 fully. */
-function swung(pos: Point[], flaps: number[][], stack: number[], c: Crease, { moving, under }: Swing, s = -1): [Point[], number[]] {
+export function swung(pos: Point[], flaps: number[][], stack: number[], c: Crease, { moving, under }: Swing, s = -1): [Point[], number[]] {
 	return [fold(pos, flaps, c, moving, s), restack(stack, moving, s, under)];
 }
 

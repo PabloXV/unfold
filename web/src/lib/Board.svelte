@@ -175,6 +175,7 @@
 			if (k < 1) requestAnimationFrame(tick);
 			else {
 				turning = undefined;
+				if (to === 1) sheet.settled();
 				wait();
 			}
 		};
