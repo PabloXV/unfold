@@ -1,6 +1,5 @@
 import { type Crease, random, swinger, swung } from './fold';
 import { inside, turn } from './geometry';
-import { Sheet } from './sheet.svelte';
 import type { Point } from './unfold';
 
 /** How often making a target turns the paper over before a fold. */
@@ -15,7 +14,7 @@ export type Shape = { pos: Point[]; stack: number[] };
 const turned = ({ pos, stack }: Shape): Shape => ({ pos: pos.map((p) => ({ x: -p.x, y: p.y })), stack: [...stack].reverse() });
 
 /** The flat sheet folded along up to `k` different creases by the taps a player can make, turned over now and then. */
-function target(sheet: Point[], flaps: number[][], all: Crease[], k: number, seed: number): { shape: Shape; folds: number } {
+export function target(sheet: Point[], flaps: number[][], all: Crease[], k: number, seed: number): { shape: Shape; folds: number } {
 	const rnd = random(seed);
 	let shape: Shape = { pos: sheet, stack: flaps.map((_, i) => i) };
 	const used = new Set<Crease>();
@@ -68,23 +67,4 @@ export function same(a: Shape, b: Shape, flaps: number[][], faceUp: number[]): b
 		}
 	}
 	return true;
-}
-
-/** A level of the matching game: the flat sheet to fold until it looks like the target. */
-export class Match extends Sheet {
-	readonly target: Shape;
-	/** The fewest folds that make the target. */
-	readonly folds: number;
-
-	constructor(seed: number, level: number, folds: number) {
-		super(seed, level);
-		const made = target(this.upright, this.flaps, this.creases, folds, seed * 31 + level);
-		[this.target, this.folds] = [made.shape, made.folds];
-		this.pos = this.upright;
-		this.stack = this.flaps.map((_, k) => k);
-	}
-
-	settled(): void {
-		this.solved = same({ pos: this.pos, stack: this.stack }, this.target, this.flaps, this.faceUp);
-	}
 }

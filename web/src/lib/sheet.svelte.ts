@@ -1,8 +1,9 @@
-import { type Crease, creases, crumple, flat, lopsided } from './fold';
+import { type Crease, creases, lopsided } from './fold';
 import { points, turn } from './geometry';
+import { type Shape, same, target } from './match';
 import { Puzzle, type Point } from './unfold';
 
-/** One go at a level: the folded paper, unfolded a crease at a time until it lies flat. */
+/** One go at a level: the flat sheet, folded a crease at a time until it looks like the target. */
 export class Sheet {
 	readonly seed: number;
 	readonly level: number;
@@ -10,12 +11,15 @@ export class Sheet {
 	readonly dots: number;
 	/** Vertex triples, in the order the stack indexes them. */
 	readonly flaps: number[][];
+	/** The fewest folds that make the target. */
 	readonly par: number;
 	/** Per flap, the sign of its area on the flat sheet; drawn the other way round, it shows its back. */
 	readonly faceUp: number[];
 	/** The flat sheet, its flaps made lopsided, fitted into the unit circle. */
 	readonly upright: Point[];
 	readonly creases: Crease[];
+	/** The folded shape to match. */
+	readonly target: Shape;
 
 	pos = $state.raw<Point[]>([]);
 	/** Flaps bottom to top. */
@@ -38,8 +42,10 @@ export class Sheet {
 		this.creases = creases(this.flaps);
 		this.upright = lopsided(points(a.upright()), this.flaps, this.faceUp, this.creases, seed, level);
 		a.free();
-		const start = crumple(this.upright, this.flaps, this.creases, seed, level);
-		[this.pos, this.stack, this.par] = [start.pos, start.stack, start.par];
+		const made = target(this.upright, this.flaps, this.creases, Math.max(1, Math.floor(level / 2)), seed * 31 + level);
+		[this.target, this.par] = [made.shape, made.folds];
+		this.pos = this.upright;
+		this.stack = this.flaps.map((_, k) => k);
 		this.#before = before;
 		this.moves = before;
 	}
@@ -49,9 +55,9 @@ export class Sheet {
 		return !this.solved && this.moves > this.#before;
 	}
 
-	/** Checks, once a fold has settled, whether the paper now lies flat. */
+	/** Checks, once a fold or turn has settled, whether the paper now looks like the target. */
 	settled(): void {
-		this.solved = flat(this.flaps, this.faceUp, this.pos);
+		this.solved = same({ pos: this.pos, stack: this.stack }, this.target, this.flaps, this.faceUp);
 	}
 }
 

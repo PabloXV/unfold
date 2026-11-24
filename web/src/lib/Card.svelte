@@ -3,9 +3,7 @@
 	import { t } from './i18n/index.svelte';
 	import Paper from './Paper.svelte';
 	import { FONT, SIZE, runLine, type Result } from './card';
-	import { Blink } from './blink.svelte';
-	import { creases, loose, play, tap } from './fold';
-	import { fit, svgPoint, trianglePath } from './geometry';
+	import { trianglePath } from './geometry';
 	import { CAST, DEFAULT_PAPER, LIGHT } from './theme';
 	import type { Point } from './unfold';
 
@@ -14,8 +12,7 @@
 		flaps,
 		faceUp,
 		corners,
-		order,
-		onchange
+		order
 	}: {
 		result: Result;
 		flaps: number[][];
@@ -24,16 +21,12 @@
 		corners: Point[];
 		/** Flap indices bottom to top. */
 		order: number[];
-		onchange?: (corners: Point[], order: number[]) => void;
 	} = $props();
 
 	/** The paper's middle and scale on the card. */
 	const CX = SIZE / 2;
 	const CY = 500;
 	const SCALE = 280;
-	/** How near a tap must land to a crease to fold it, and how long the fold takes, in ms. */
-	const TAP = 0.2;
-	const SWING = 320;
 	const LINE = 48;
 	const FLAME = 46;
 	/** The grid of levels above the result line: square size, the gap between, and its baseline. */
@@ -50,27 +43,6 @@
 	};
 
 	let svg = $state<SVGSVGElement | undefined>(undefined);
-	let pos = $state.raw<Point[]>([]);
-	let stack = $state.raw<number[]>([]);
-	let folding = $state(false);
-	const blink = new Blink();
-	let settling: (() => void) | undefined;
-
-	const all = $derived(creases(flaps));
-	const pulse = $derived(folding || !pos.length ? new Set<string>() : loose(all, pos, flaps, stack));
-
-	$effect.pre(() => {
-		pos = corners;
-	});
-
-	$effect.pre(() => {
-		stack = order;
-	});
-
-	$effect(() => () => {
-		blink.stop();
-		settling?.();
-	});
 
 	let scoreText = $state<SVGTextElement | undefined>(undefined);
 	let countText = $state<SVGTextElement | undefined>(undefined);
@@ -102,36 +74,7 @@
 		}));
 	});
 
-	const silhouette = $derived(flaps.map((f) => trianglePath(f.map((v) => pos[v]))).join(''));
-
-	function cardPoint(e: PointerEvent): Point {
-		const p = svgPoint(svg!, e);
-		return { x: (p.x - CX) / SCALE, y: (p.y + CY) / SCALE };
-	}
-
-	/** Folds the crease tapped, keeping the paper fitted on the card, or lights what keeps it from folding. */
-	function onpointerup(e: PointerEvent): void {
-		if (e.button > 0) return;
-		settling?.();
-		const did = tap(cardPoint(e), TAP, all, pos, flaps, stack);
-		if (!did) return;
-		if ('inWay' in did) return blink.show(did.inWay);
-		folding = true;
-		settling = play(
-			SWING,
-			did.c,
-			did.swing,
-			pos,
-			flaps,
-			stack,
-			(p, s) => ([pos, stack] = [fit(p), s]),
-			() => {
-				settling = undefined;
-				folding = false;
-				onchange?.(pos, stack);
-			}
-		);
-	}
+	const silhouette = $derived(flaps.map((f) => trianglePath(f.map((v) => corners[v]))).join(''));
 
 	export function element(): SVGSVGElement | undefined {
 		return svg;
@@ -144,7 +87,6 @@
 	viewBox="0 0 {SIZE} {SIZE}"
 	role="img"
 	aria-label={t().cardLabel(result.date, `${runLine(result)} ${result.grid}`) + (result.streak ? `, ${t().streak(result.streak)}` : '')}
-	{onpointerup}
 >
 	<defs>
 		<radialGradient id="card-spot" cx={CX} cy={CY} r={SIZE * 0.62} gradientUnits="userSpaceOnUse">
@@ -166,13 +108,11 @@
 	<g transform="translate({CX} {CY}) scale({SCALE})">
 		<g filter="url(#card-shadow)"><path d={silhouette} fill="#000" /></g>
 		<Paper
-			flaps={stack.map((k) => flaps[k])}
-			faceUp={stack.map((k) => faceUp[k])}
-			{pos}
+			flaps={order.map((k) => flaps[k])}
+			faceUp={order.map((k) => faceUp[k])}
+			pos={corners}
 			colors={PAPER}
 			creaseWidth={0.009}
-			{pulse}
-			lit={blink.places(stack)}
 			id="card"
 		/>
 	</g>

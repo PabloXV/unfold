@@ -26,7 +26,7 @@ export const en = {
 	close: 'Close',
 	previousLevel: 'Previous level',
 	nextLevel: 'Next level',
-	resetShape: 'Reset shape',
+	target: 'The shape to match',
 	shareCard: 'Share card',
 	shareLink: 'Share link',
 	cardTools: 'Card',
@@ -34,10 +34,10 @@ export const en = {
 	board: (moves: number) => `Paper: ${moves} moves`,
 	cardLabel: (date: string, score: string) => `Share card: ${date}, ${score}`,
 	help: [
-		'Tap creases to unfold the paper until it lies flat: no flap over another, none turned over.',
-		'Each fold is a move. Glowing creases can fold now; tap a stuck one to see what\'s in the way. Drag to turn the paper over, for free.',
-		`One run a day, each level harder. "Solvable in 4" is the fewest moves; the run has ${BUDGET} extra to spend. Go over and the run ends with that level.`,
-		'Replay levels with ‹ ›. Share any you solved, folding the card into your own shape first. The fire is your streak.'
+		'Fold the flat paper until it looks like the picture above it: the same flaps on top, the same sides up.',
+		'Tap a crease to fold it, and again to unfold. Glowing creases can fold now; tap a stuck one to see what\'s in the way. Drag to turn the paper over, for free.',
+		`One run a day, each level harder. "Solvable in 4" is the fewest folds; the run has ${BUDGET} extra to spend. Go over and the run ends with that level.`,
+		'Replay levels with ‹ ›, and share any you solved. The fire is your streak.'
 	],
 	keys: {
 		levels: 'previous, next level',

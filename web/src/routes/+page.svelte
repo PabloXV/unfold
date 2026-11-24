@@ -5,12 +5,13 @@
 	import { replaceState } from '$app/navigation';
 	import Board from '#lib/Board.svelte';
 	import Card from '#lib/Card.svelte';
+	import Target from '#lib/Target.svelte';
 	import Icon from '#lib/Icon.svelte';
 	import { Sheet } from '#lib/sheet.svelte.ts';
 	import { fit } from '#lib/geometry.ts';
 	import { dailySeed, formatDay, loadCore, paperColors, parseCode, today, type Point } from '#lib/unfold.ts';
 	import { BUDGET, finished, frontier, grid, loadRun, overs, saveRun, spent, streak, type Run } from '#lib/run.ts';
-	import { forget, readJson, writeJson } from '#lib/storage.ts';
+	import { readJson, writeJson } from '#lib/storage.ts';
 	import { copyText, score, shareCard, shareLink, shareText, toPng, type Result } from '#lib/card.ts';
 	import { accentFor } from '#lib/accent.ts';
 	import { swanUrl } from '#lib/favicon.ts';
@@ -32,7 +33,7 @@
 	let day = $state<number | undefined>(undefined);
 	/** The day's run, while playing a day's seed. */
 	let run = $state.raw<Run | undefined>(undefined);
-	/** The solved level the card shows, as it lay flat. */
+	/** The solved level the card shows, as it was matched. */
 	let cardShape = $state.raw<{ level: number; flaps: number[][]; faceUp: number[] } | undefined>(undefined);
 	/** Which way the board slides when the level changes: 1 to the next, -1 back, 0 in place. */
 	let slide = $state<1 | -1 | 0>(0);
@@ -40,12 +41,8 @@
 	let dark = $state(false);
 	let cardOpen = $state(false);
 	let helpOpen = $state(false);
-	/** Whether the card's shape differs from how the paper lay when solved. */
-	let reshaped = $state(false);
-	/** The card's corners and flaps now, and as the paper lay when solved. */
+	/** The card's corners and its flaps bottom to top. */
 	let corners = $state.raw<Point[] | undefined>(undefined);
-	let solvedShape: Solved | undefined;
-	/** The card's flaps bottom to top. */
 	let order = $state.raw<number[]>([]);
 	let cardView = $state<Card | undefined>(undefined);
 	/** The card as a PNG, made ahead so sharing opens the share sheet right on the tap. */
@@ -77,9 +74,7 @@
 	type Solved = { corners: Point[]; order: number[] };
 
 	const here = () => location.origin + location.pathname;
-	const shapeKey = (level: number) => `unfold:folded:${day}:${level}`;
 	const solvedKey = (level: number) => `unfold:solved:${day}:${level}`;
-	const orderKey = (level: number) => `unfold:folded-order:${day}:${level}`;
 
 	onMount(() => {
 		loadCore().then(
@@ -191,18 +186,14 @@
 		return !daily || level <= frontier(run!) ? level : undefined;
 	}
 
-	/** The card for the level on the board: its paper as it lay flat when solved, as reshaped if it was. */
+	/** The card for the level on the board: the shape as the player matched it, else the target. */
 	function openCard(): void {
 		if (!game || !shareable) return;
-		const { level, flaps, faceUp, dots } = game;
+		const { level, flaps, faceUp, dots, target } = game;
 		cardShape = { level, flaps, faceUp };
 		const solved = readJson<Solved>(solvedKey(level));
-		solvedShape = solved?.corners?.length === dots && solved.order?.length === flaps.length ? solved : { corners: game.upright, order: flatOrder() };
-		const saved = readJson<Point[]>(shapeKey(level));
-		const stack = readJson<number[]>(orderKey(level));
-		reshaped = saved?.length === dots && stack?.length === flaps.length;
-		corners = reshaped ? saved! : solvedShape.corners;
-		order = reshaped ? stack! : solvedShape.order;
+		const shape = solved?.corners?.length === dots && solved.order?.length === flaps.length ? solved : { corners: fit(target.pos), order: target.stack };
+		({ corners, order } = shape);
 		cardOpen = true;
 	}
 
@@ -210,23 +201,7 @@
 		cardOpen = false;
 	}
 
-	function saveShape(next: Point[], stack: number[]): void {
-		corners = next;
-		order = stack;
-		reshaped = true;
-		writeJson(shapeKey(cardShape!.level), round(next));
-		writeJson(orderKey(cardShape!.level), stack);
-	}
-
-	const flatOrder = () => (cardShape ? cardShape.flaps.map((_, k) => k) : []);
 	const round = (pts: Point[]) => pts.map((p) => ({ x: +p.x.toFixed(4), y: +p.y.toFixed(4) }));
-
-	function resetShape(): void {
-		if (solvedShape) ({ corners, order } = solvedShape);
-		reshaped = false;
-		forget(shapeKey(cardShape!.level));
-		forget(orderKey(cardShape!.level));
-	}
 
 	async function share(): Promise<void> {
 		if (!png || !result) return;
@@ -335,6 +310,7 @@
 		{#if game}
 			{#key game}
 				<div class="slide" in:fly={{ x: `${slide * 100}%`, opacity: 0, duration: SLIDE, easing: cubicInOut }} out:fly={{ x: `${-slide * 100}%`, opacity: 0, duration: SLIDE, easing: cubicInOut }}>
+					<Target sheet={game} />
 					<Board sheet={game} />
 				</div>
 			{/key}
@@ -414,12 +390,8 @@
 					faceUp={cardShape.faceUp}
 					{corners}
 					{order}
-					onchange={saveShape}
 				/>
 				<div class="bar" role="toolbar" aria-label={t().cardTools} style:background={CARD_BAR}>
-					<button class="icon" onclick={resetShape} disabled={!reshaped} aria-label={t().resetShape} title={t().resetShape}>
-						<Icon name="reset" />
-					</button>
 					<button class="icon share" onclick={share} aria-label={t().shareCard} title={t().shareCard}>
 						<Icon name="share" />
 					</button>
@@ -467,14 +439,16 @@
 	}
 	.board {
 		position: relative;
-		width: min(100%, 62svh);
-		aspect-ratio: 1;
+		width: min(100%, 46svh);
 		display: grid;
 		place-items: center;
 	}
 	.slide {
 		grid-area: 1 / 1;
 		width: 100%;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
 	}
 	.board::before {
 		content: '';

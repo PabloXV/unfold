@@ -187,57 +187,6 @@ export function play(ms: number, c: Crease, swing: Swing, pos: Point[], flaps: n
 	return finish;
 }
 
-/** Earlier folds a player could undo too soon: free to unfold now, but pinning crease `c` both ways if they are. */
-function traps(c: Crease, earlier: Crease[], all: Crease[], pos: Point[], flaps: number[][], stack: number[]): number {
-	return earlier.filter((x) => {
-		const swing = swinger(x, all, pos, flaps, stack);
-		if (!swing) return false;
-		const [p, s] = swung(pos, flaps, stack, x, swing);
-		return !swinger(c, all, p, flaps, s);
-	}).length;
-}
-
-/** The paper turned over: mirrored, its stack upside down. */
-const turned = (pos: Point[], stack: number[]) => [pos.map((p) => ({ x: -p.x, y: p.y })), [...stack].reverse()] as const;
-
-/** The most flaps a scrambling fold swings, as an origami folder folds flaps rather than halves of the sheet. */
-const FLAP = 3;
-/** The most earlier folds one scrambling fold may cover, so that most levels unfold in more than one order. */
-const BURY = 1;
-
-/** The level's start: the flat sheet folded over creases in turn, from both sides, each fold one a tap swings back, setting
- * traps where it can; tapping them in reverse, turning over to match, unfolds it, so its fold count is the fewest moves. */
-export function crumple(sheet: Point[], flaps: number[][], all: Crease[], seed: number, level: number) {
-	const rnd = random(seed * 977 + level * 131);
-	let pos = sheet;
-	let stack = flaps.map((_, i) => i);
-	const used: Crease[] = [];
-	const unburied = (p: Point[], s: number[]) => used.filter((c) => swinger(c, all, p, flaps, s)).length;
-	for (let i = Math.min(all.length, 1 + Math.floor(level / 2)); i > 0; i--) {
-		if (rnd() < 0.5) [pos, stack] = turned(pos, stack);
-		const before = unburied(pos, stack);
-		const options = all.flatMap((c) =>
-			used.includes(c)
-				? []
-				: c.sides.flatMap((side) => {
-						if (inWay(c, all, pos, flaps, stack, side).length) return [];
-						const [p, s] = [fold(pos, flaps, c, side, -1), restack(stack, side, -1)];
-						if (swinger(c, all, p, flaps, s)?.moving !== side) return [];
-						return [{ c, p, s, big: side.length > FLAP, buries: before - unburied(p, s), traps: traps(c, used, all, p, flaps, s) }];
-					}),
-		);
-		if (!options.length) break;
-		const best = options.filter((o) => !o.big || options.every((q) => q.big));
-		const most = Math.max(...best.map((o) => o.traps));
-		const fewest = Math.max(BURY, Math.min(...best.map((o) => o.buries)));
-		const pool = most > 0 ? best.filter((o) => o.traps === most) : best.filter((o) => o.buries <= fewest);
-		const pick = pool[Math.floor(rnd() * pool.length)];
-		[pos, stack] = [pick.p, pick.s];
-		used.push(pick.c);
-	}
-	return { pos, stack, par: used.length };
-}
-
 /** How different a flap's sides must be, as a share of its longest; its smallest angle, in radians; and how far
  * one flap's corner must land from its neighbor's when folded over their crease, as a share of the crease. */
 const SCALENE = 0.12;
